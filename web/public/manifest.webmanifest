@@ -1,0 +1,10 @@
+{
+  "name": "Cursor Pocket",
+  "short_name": "Pocket",
+  "description": "Unofficial Cursor Cloud Agents client",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f12",
+  "theme_color": "#3f67eb",
+  "icons": []
+}

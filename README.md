@@ -1,53 +1,70 @@
 # Cursor Pocket
 
-Unofficial SwiftUI iOS client for [Cursor Cloud Agents API v1](https://cursor.com/docs/cloud-agent/api/endpoints) — ChatGPT-style chat UI with streaming replies, powered by your Cursor API key and subscription.
+Unofficial client for [Cursor Cloud Agents API v1](https://cursor.com/docs/cloud-agent/api/endpoints) — connect your Cursor account, describe an idea, and chat with streaming cloud agents.
 
 **Not affiliated with Cursor or Anysphere.**
 
+## Develop without a Mac (web-first)
+
+The **web PWA** (`web/`) is the primary loop for testing API and UX in any browser. iOS (`CursorPocket/`) stays in parallel against the same API contract in `shared/api/`.
+
+```bash
+git clone https://github.com/hourdays/cursor-pocket.git
+cd cursor-pocket/web
+npm install
+npm run dev
+```
+
+Open http://localhost:5173, paste your [Cursor API key](https://cursor.com/dashboard), and use **What do you want to build?** to start an agent. Usage is billed to your existing Cursor subscription.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full product loop and web ↔ iOS parity.
+
 ## Features
 
-- Chat with Cloud Agents from iPhone or iPad
-- Streaming assistant replies (SSE)
-- API key stored in the iOS Keychain
-- **Chat-only mode** — Q&A without attaching a GitHub repo
+- Connect with Cursor API key (validates via `GET /v1/me`)
+- Idea → new cloud agent → streamed assistant replies (SSE)
+- Agent list, follow-up messages, cancel in-flight run
+- **Chat-only mode** (default) — Q&A without a GitHub repo
 - Optional GitHub repo URL + branch for coding agents
-- Open the agent in Safari (`cursor.com/agents/...`)
+- Open agent in browser (`cursor.com/agents/...`)
 
-## Requirements
+| Surface | Status | How to run |
+|---------|--------|------------|
+| Web PWA | v0.2 | `cd web && npm run dev` |
+| iOS app | v0.1 | Xcode on Mac (below) |
+
+## iOS (Mac + Xcode)
+
+### Requirements
 
 - iOS 17+
 - Xcode 15+ (on Mac)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-- A [Cursor API key](https://cursor.com/dashboard) (user-scoped)
+- A [Cursor API key](https://cursor.com/dashboard)
 
-## Setup
+### Setup
 
 ```bash
-git clone https://github.com/hourdays/cursor-pocket.git
 cd cursor-pocket
 brew install xcodegen
 xcodegen generate
 open CursorPocket.xcodeproj
 ```
 
-In Xcode, select your Apple Developer team, then run on a simulator or device.
-
-## First run
-
-1. Paste your Cursor API key when prompted.
-2. In **Settings**, choose **Chat-only mode** (default) or enter a GitHub repo URL + branch.
-3. Tap **New chat** and send a message.
+Select your Apple Developer team, then run on a simulator or device. API key is stored in the iOS Keychain.
 
 ## Project layout
 
 ```
 cursor-pocket/
-├── CursorPocket/          # SwiftUI app source
-├── project.yml            # XcodeGen spec
+├── web/                 # Vite + React PWA (test anywhere)
+├── shared/api/          # TypeScript API client + types (parity contract)
+├── CursorPocket/        # SwiftUI iOS app
+├── docs/ARCHITECTURE.md # Web-first loop, account model, parity
+├── project.yml          # XcodeGen spec (iOS)
 ├── README.md
-├── LICENSE
-├── PUBLISH.md             # App Store notes (optional)
-└── ROADMAP.md
+├── ROADMAP.md
+└── LICENSE
 ```
 
 ## API reference

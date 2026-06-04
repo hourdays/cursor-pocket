@@ -17,6 +17,8 @@ npm run dev
 
 Open http://localhost:5173, paste your [Cursor API key](https://cursor.com/dashboard), and use **What do you want to build?** to start an agent. Usage is billed to your existing Cursor subscription.
 
+**UI demo (no API key):** `npm run dev` then open `http://localhost:5173/?demo=1` — scripted walkthrough for screenshots/video. See [docs/assets/cursor-pocket-demo.mp4](docs/assets/cursor-pocket-demo.mp4).
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full product loop and web ↔ iOS parity.
 
 ## Features

@@ -17,7 +17,9 @@ npm run dev
 
 Open http://localhost:5173, paste your [Cursor API key](https://cursor.com/dashboard), and use **What do you want to build?** to start an agent. Usage is billed to your existing Cursor subscription.
 
-**Live demo (after merge to `main`):** https://hourdays.github.io/cursor-pocket/
+**On your phone (PWA):** open https://hourdays.github.io/cursor-pocket/ in **Safari** → Share → **Add to Home Screen**. Same app as web; API key stays on your phone.
+
+**Live demo:** https://hourdays.github.io/cursor-pocket/ (deploys when `main` is updated)
 
 **UI demo (no API key):** `npm run dev` then open `http://localhost:5173/?demo=1` — scripted walkthrough for screenshots/video. See [docs/assets/cursor-pocket-demo.mp4](docs/assets/cursor-pocket-demo.mp4).
 

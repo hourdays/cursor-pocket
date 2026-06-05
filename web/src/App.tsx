@@ -49,6 +49,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -407,18 +408,37 @@ export function App() {
         <Sidebar
           agents={agents}
           activeId={activeAgentId}
-          onSelect={openAgent}
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          onSelect={(agent) => {
+            setSidebarOpen(false);
+            void openAgent(agent);
+          }}
           onNew={() => {
             setActiveAgentId(null);
             setMessages([]);
             setView("idea");
+            setSidebarOpen(false);
           }}
-          onSettings={() => setView("settings")}
+          onSettings={() => {
+            setView("settings");
+            setSidebarOpen(false);
+          }}
           accountLabel={accountLabel}
         />
         <div className="main">
           <header className="topbar">
-            <span className="brand">Cursor Pocket</span>
+            <div className="topbar-start">
+              <button
+                type="button"
+                className="btn btn-ghost mobile-only"
+                aria-label="Open agents"
+                onClick={() => setSidebarOpen(true)}
+              >
+                ☰
+              </button>
+              <span className="brand">Cursor Pocket</span>
+            </div>
             <button type="button" className="btn btn-ghost" onClick={() => setView("settings")}>
               Settings
             </button>
@@ -453,21 +473,47 @@ export function App() {
 
   return (
     <div className="app-shell">
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close agents"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       <Sidebar
         agents={agents}
         activeId={activeAgentId}
-        onSelect={openAgent}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onSelect={(agent) => {
+          setSidebarOpen(false);
+          void openAgent(agent);
+        }}
         onNew={() => {
           setActiveAgentId(null);
           setMessages([]);
           setView("idea");
+          setSidebarOpen(false);
         }}
-        onSettings={() => setView("settings")}
+        onSettings={() => {
+          setView("settings");
+          setSidebarOpen(false);
+        }}
         accountLabel={accountLabel}
       />
       <div className="main">
         <header className="topbar">
-          <div>
+          <div className="topbar-start">
+            <button
+              type="button"
+              className="btn btn-ghost mobile-only"
+              aria-label="Open agents"
+              onClick={() => setSidebarOpen(true)}
+            >
+              ☰
+            </button>
+            <div>
             <div className="brand">{activeAgentName}</div>
             {activeAgentId && (
               <a
@@ -479,6 +525,7 @@ export function App() {
                 Open in Cursor →
               </a>
             )}
+            </div>
           </div>
           <button type="button" className="btn btn-ghost" onClick={() => setView("idea")}>
             New idea
@@ -557,6 +604,8 @@ export function App() {
 function Sidebar({
   agents,
   activeId,
+  open,
+  onClose,
   onSelect,
   onNew,
   onSettings,
@@ -564,13 +613,20 @@ function Sidebar({
 }: {
   agents: AgentSummary[];
   activeId: string | null;
+  open?: boolean;
+  onClose?: () => void;
   onSelect: (a: AgentSummary) => void;
   onNew: () => void;
   onSettings: () => void;
   accountLabel: string | null;
 }) {
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${open ? " open" : ""}`}>
+      {onClose && (
+        <button type="button" className="btn btn-ghost mobile-only sidebar-close" onClick={onClose}>
+          ✕
+        </button>
+      )}
       <div className="brand">Pocket</div>
       {accountLabel && <div className="muted">{accountLabel}</div>}
       <button type="button" className="btn btn-primary" onClick={onNew}>

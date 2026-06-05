@@ -25,6 +25,43 @@ flowchart LR
 
 ---
 
+## Automated setup (API script)
+
+From a machine with your Cloudflare token (not stored in this repo):
+
+```bash
+git clone https://github.com/hourdays/cursor-pocket.git
+cd cursor-pocket
+chmod +x scripts/setup-cloudflare.sh
+
+export CLOUDFLARE_API_TOKEN="..."   # Pages Edit + Access Edit
+export POCKET_ALLOWED_EMAIL="you@example.com"
+
+./scripts/setup-cloudflare.sh
+```
+
+The script uses Cloudflare APIs to:
+
+1. Verify your token  
+2. Detect account ID  
+3. Create (or update) an **Access application** on `cursor-pocket.pages.dev`  
+4. Add an **Allow** policy for your email  
+5. Print `gh secret set` commands for GitHub Actions deploy  
+
+Then paste secrets and run **Deploy to Cloudflare Pages** workflow.
+
+### What cloud agents cannot do from GitHub alone
+
+| Action | Who |
+|--------|-----|
+| Create Cloudflare API token | **You** (dashboard) |
+| Run `setup-cloudflare.sh` | **You** (token stays local) |
+| `gh secret set` for CF tokens | **You** (repo admin) |
+| Enable GitHub Pages | **You** (repo settings) |
+| Push code + workflows | ✅ Already in repo |
+
+---
+
 ## Part 1 — Deploy to Cloudflare Pages
 
 ### 1. Cloudflare API token

@@ -1,50 +1,53 @@
 # Test Cursor Pocket on your phone
 
-## What you get
+## Recommended: Cloudflare Pages + Access
 
-A **personal web app** at a public URL, locked to **your Cursor account email** (via API key + allowlist). Install to Home Screen on iPhone — works like an app.
+**Private URL, email login at the edge, install like an app.**
 
-## One-time setup (repo admin)
+1. Follow **[docs/CLOUDFLARE_ACCESS.md](CLOUDFLARE_ACCESS.md)** (deploy + Access policy for your email)
+2. Open your Pages URL in **Safari** (e.g. `https://cursor-pocket.pages.dev`)
+3. Complete **Cloudflare Access** login (email PIN)
+4. **Share → Add to Home Screen** → “Pocket”
+5. Paste your [Cursor API key](https://cursor.com/dashboard) → chat
 
-### 1. Lock to your email
+Billing stays on your Cursor subscription.
 
-In GitHub: **Settings → Secrets and variables → Actions → New repository secret**
+---
 
-| Secret | Value |
-|--------|--------|
-| `POCKET_ALLOWED_EMAIL` | Your Cursor account email (same as [dashboard](https://cursor.com/dashboard) / `GET /v1/me`) |
+## Alternative: GitHub Pages (no edge login)
 
-Only that email’s API key can connect on the deployed site. Local `npm run dev` has no lock unless you set `VITE_ALLOWED_EMAIL` in `web/.env.local`.
+Simpler hosting; security is **app allowlist only** (weaker than Access).
 
-### 2. Enable GitHub Pages
+### Setup
 
-**Settings → Pages → Build and deployment → Source:** `GitHub Actions`
+1. GitHub secret `POCKET_ALLOWED_EMAIL` = your Cursor email  
+   [Settings → Secrets](https://github.com/hourdays/cursor-pocket/settings/secrets/actions)
+2. **Settings → Pages → Source:** GitHub Actions  
+3. Run [Deploy web to GitHub Pages](https://github.com/hourdays/cursor-pocket/actions/workflows/pages.yml)
 
-Then run **Actions → Deploy web to GitHub Pages** (or push to `main`).
+**URL:** https://hourdays.github.io/cursor-pocket/
 
-### 3. URL
+### iPhone
 
-https://hourdays.github.io/cursor-pocket/
+Safari → URL → Add to Home Screen → API key.
 
-## On your iPhone
+---
 
-1. Open the URL in **Safari** (not Chrome — Add to Home Screen works best in Safari).
-2. **Share → Add to Home Screen** → name it “Pocket”.
-3. Open Pocket from your home screen.
-4. Paste your [Cursor API key](https://cursor.com/dashboard).
-5. Chat — billed to your Cursor subscription.
+## Security comparison
 
-## Security notes
+| Method | Reachable on phone | Email-locked |
+|--------|-------------------|--------------|
+| **Cloudflare Access** | Yes | Yes — login before app loads |
+| GitHub Pages + allowlist | Yes | Partial — API key must match email |
+| Local `npm run dev` | Same Wi‑Fi only | Optional `.env.local` |
 
-- API key stays in **this browser only** (localStorage).
-- Email allowlist is enforced after `GET /v1/me` on connect and on every reload.
-- The deployed site is HTTPS. Do not share your API key.
-- For stronger isolation later: Cloudflare Access or a private repo + VPN.
+---
 
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| 404 on URL | Enable Pages (step 2) and wait for deploy workflow to finish |
-| “This Pocket site is private” | Use the API key for the email in `POCKET_ALLOWED_EMAIL` |
-| Can’t install to Home Screen | Use Safari; open the GitHub Pages URL directly |
+| 404 | Enable hosting (Pages or Cloudflare workflow) |
+| Access login loop | Clear cookies; check Access app domain matches URL |
+| “This Pocket site is private” | API key must match `POCKET_ALLOWED_EMAIL` |
+| Can’t Add to Home Screen | Use Safari on the final HTTPS URL |

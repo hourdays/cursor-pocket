@@ -19,6 +19,7 @@
 - [x] Agent history (load runs when reopening sidebar chat)
 - [x] Markdown rendering in assistant bubbles
 - [ ] Show PR/branch from run `git` payload in UI
+- [x] Cloudflare Pages deploy workflow + [CLOUDFLARE_ACCESS.md](docs/CLOUDFLARE_ACCESS.md)
 
 ### v0.3 — Chat MVP (next)
 

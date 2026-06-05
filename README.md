@@ -17,9 +17,9 @@ npm run dev
 
 Open http://localhost:5173, paste your [Cursor API key](https://cursor.com/dashboard), and use **What do you want to build?** to start an agent. Usage is billed to your existing Cursor subscription.
 
-**On your phone:** see [docs/PHONE.md](docs/PHONE.md) — deploy to GitHub Pages, lock to your email with `POCKET_ALLOWED_EMAIL`, then Safari → **Add to Home Screen**.
+**On your phone (private):** [docs/CLOUDFLARE_ACCESS.md](docs/CLOUDFLARE_ACCESS.md) — Cloudflare Pages + **Cloudflare Access** (email login) → Safari → **Add to Home Screen**.
 
-**Live URL:** https://hourdays.github.io/cursor-pocket/ (requires Pages enabled + deploy workflow)
+**Alternate hosting:** [docs/PHONE.md](docs/PHONE.md) (GitHub Pages + app allowlist)
 
 **UI demo (no API key):** `npm run dev` then open `http://localhost:5173/?demo=1` — scripted walkthrough for screenshots/video. See [docs/assets/cursor-pocket-demo.mp4](docs/assets/cursor-pocket-demo.mp4).
 

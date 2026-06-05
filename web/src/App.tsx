@@ -5,11 +5,16 @@ import {
   cancelRun,
   createAgent,
   createRun,
+  getAgent,
   getRun,
+  isActiveRunStatus,
+  listAgentRuns,
   listAgents,
+  runsToChatMessages,
   streamRun,
   validateAPIKey,
 } from "@shared/api/cloudAgentsClient";
+import { MarkdownContent } from "./MarkdownContent";
 import {
   clearAPIKey,
   loadAPIKey,
@@ -43,7 +48,9 @@ export function App() {
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const refreshAgents = useCallback(async () => {
     if (!apiKey) {
@@ -76,6 +83,10 @@ export function App() {
     }
   }, [apiKey, refreshAccount, refreshAgents]);
 
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loadingHistory]);
+
   const connect = async () => {
     setError(null);
     const trimmed = keyDraft.trim();
@@ -106,12 +117,50 @@ export function App() {
     setView("connect");
   };
 
-  const openAgent = (agent: AgentSummary) => {
+  const openAgent = async (agent: AgentSummary) => {
+    if (!apiKey) {
+      return;
+    }
+
+    abortRef.current?.abort();
     setActiveAgentId(agent.id);
     setActiveAgentName(agent.name);
     setMessages([]);
     setView("chat");
     setError(null);
+    setLoadingHistory(true);
+    setIsSending(false);
+    setCurrentRunId(null);
+    setRunStatus(null);
+
+    try {
+      const detail = await getAgent(apiKey, agent.id);
+      setActiveAgentName(detail.name);
+
+      const runs = await listAgentRuns(apiKey, agent.id);
+      setMessages(
+        runsToChatMessages(runs).map((m) => ({ ...m, streaming: false }))
+      );
+
+      const activeRun =
+        [...runs]
+          .reverse()
+          .find((run) => isActiveRunStatus(run.status)) ??
+        (detail.latestRunId
+          ? runs.find((run) => run.id === detail.latestRunId)
+          : undefined);
+
+      if (activeRun && isActiveRunStatus(activeRun.status)) {
+        setIsSending(true);
+        setCurrentRunId(activeRun.id);
+        setRunStatus(activeRun.status);
+        void consumeStream(agent.id, activeRun.id);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingHistory(false);
+    }
   };
 
   const consumeStream = async (agentId: string, runId: string) => {
@@ -437,14 +486,22 @@ export function App() {
         </header>
 
         <div className="chat">
-          {messages.length === 0 && (
+          {loadingHistory && (
+            <p className="muted">Loading conversation…</p>
+          )}
+          {!loadingHistory && messages.length === 0 && (
             <p className="muted">Send a message to continue this agent.</p>
           )}
           {messages.map((m) => (
             <div key={m.id} className={`bubble ${m.role}`}>
-              {m.text || (m.streaming ? "…" : "")}
+              {m.role === "assistant" ? (
+                <MarkdownContent text={m.text} streaming={m.streaming} />
+              ) : (
+                m.text
+              )}
             </div>
           ))}
+          <div ref={chatEndRef} />
         </div>
 
         {runStatus && isSending && (

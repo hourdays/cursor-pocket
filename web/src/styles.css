@@ -185,6 +185,42 @@ a {
 .bubble.assistant {
   align-self: flex-start;
   background: var(--assistant-bubble);
+  white-space: normal;
+}
+
+.bubble.assistant p {
+  margin: 0.4em 0;
+}
+
+.bubble.assistant p:first-child {
+  margin-top: 0;
+}
+
+.bubble.assistant p:last-child {
+  margin-bottom: 0;
+}
+
+.bubble.assistant ul,
+.bubble.assistant ol {
+  margin: 0.4em 0;
+  padding-left: 1.25rem;
+}
+
+.bubble.assistant .md-pre {
+  margin: 0.5em 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: #0f0f12;
+  overflow-x: auto;
+  font-size: 0.85rem;
+}
+
+.bubble.assistant .md-code-inline {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: #0f0f12;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
 }
 
 .composer-wrap {

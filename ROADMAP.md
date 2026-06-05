@@ -10,13 +10,20 @@
 - [x] Agent list + new chat + follow-up messages
 - [x] Chat-only mode (no repo) vs optional GitHub repo URL + branch
 
-### v0.2 — Web-first loop (in progress)
+### v0.2 — Web-first loop
 
 - [x] `shared/api/` TypeScript client + types (parity contract with Swift)
 - [x] `web/` PWA: connect → idea → stream → chat
 - [x] CI: `npm run build` on PR/push
-- [ ] Deploy web demo (GitHub Pages / Cloudflare Pages)
+- [x] GitHub Pages deploy workflow (live after merge to `main`)
+- [x] Agent history (load runs when reopening sidebar chat)
+- [x] Markdown rendering in assistant bubbles
 - [ ] Show PR/branch from run `git` payload in UI
+
+### v0.3 — Chat MVP (next)
+
+- [ ] Loop B: PR links + “attach repo” UX
+- [ ] iOS parity pass for history + markdown
 
 ## Next (both surfaces)
 

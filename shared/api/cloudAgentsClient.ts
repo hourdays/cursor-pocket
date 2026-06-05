@@ -7,6 +7,7 @@ import type {
   AppSettings,
   CreateAgentResponse,
   CreateRunResponse,
+  RunsListResponse,
   StreamEvent,
 } from "./types";
 
@@ -134,6 +135,58 @@ export async function getRun(
   runId: string
 ): Promise<AgentRun> {
   return request<AgentRun>(`/agents/${agentId}/runs/${runId}`, apiKey, "GET");
+}
+
+export async function listAgentRuns(
+  apiKey: string,
+  agentId: string,
+  limit = 50
+): Promise<AgentRun[]> {
+  const response = await request<RunsListResponse>(
+    `/agents/${agentId}/runs?limit=${limit}`,
+    apiKey,
+    "GET"
+  );
+  return response.items ?? [];
+}
+
+const ACTIVE_RUN_STATUSES = new Set([
+  "CREATING",
+  "PENDING",
+  "RUNNING",
+  "QUEUED",
+]);
+
+export function isActiveRunStatus(status: string): boolean {
+  return ACTIVE_RUN_STATUSES.has(status.toUpperCase());
+}
+
+/** Chronological user/assistant pairs from completed or in-progress runs. */
+export function runsToChatMessages(
+  runs: AgentRun[]
+): { id: string; role: "user" | "assistant"; text: string }[] {
+  const sorted = [...runs].sort((a, b) =>
+    (a.createdAt ?? "").localeCompare(b.createdAt ?? "")
+  );
+  const messages: { id: string; role: "user" | "assistant"; text: string }[] =
+    [];
+
+  for (const run of sorted) {
+    const userText = run.prompt?.text?.trim();
+    if (userText) {
+      messages.push({ id: `user-${run.id}`, role: "user", text: userText });
+    }
+    const assistantText = run.result?.trim();
+    if (assistantText) {
+      messages.push({
+        id: `assistant-${run.id}`,
+        role: "assistant",
+        text: assistantText,
+      });
+    }
+  }
+
+  return messages;
 }
 
 export async function cancelRun(

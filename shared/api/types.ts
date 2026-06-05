@@ -15,14 +15,24 @@ export interface AgentsListResponse {
   nextCursor?: string;
 }
 
+export interface PromptPayload {
+  text?: string;
+}
+
 export interface AgentRun {
   id: string;
   agentId: string;
   status: string;
+  prompt?: PromptPayload;
   result?: string;
   durationMs?: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface RunsListResponse {
+  items: AgentRun[];
+  nextCursor?: string;
 }
 
 export interface AgentDetail {

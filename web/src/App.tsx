@@ -5,11 +5,16 @@ import {
   cancelRun,
   createAgent,
   createRun,
+  getAgent,
   getRun,
+  isActiveRunStatus,
+  listAgentRuns,
   listAgents,
+  runsToChatMessages,
   streamRun,
   validateAPIKey,
 } from "@shared/api/cloudAgentsClient";
+import { MarkdownContent } from "./MarkdownContent";
 import {
   clearAPIKey,
   loadAPIKey,
@@ -43,7 +48,10 @@ export function App() {
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const refreshAgents = useCallback(async () => {
     if (!apiKey) {
@@ -76,6 +84,10 @@ export function App() {
     }
   }, [apiKey, refreshAccount, refreshAgents]);
 
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loadingHistory]);
+
   const connect = async () => {
     setError(null);
     const trimmed = keyDraft.trim();
@@ -106,12 +118,50 @@ export function App() {
     setView("connect");
   };
 
-  const openAgent = (agent: AgentSummary) => {
+  const openAgent = async (agent: AgentSummary) => {
+    if (!apiKey) {
+      return;
+    }
+
+    abortRef.current?.abort();
     setActiveAgentId(agent.id);
     setActiveAgentName(agent.name);
     setMessages([]);
     setView("chat");
     setError(null);
+    setLoadingHistory(true);
+    setIsSending(false);
+    setCurrentRunId(null);
+    setRunStatus(null);
+
+    try {
+      const detail = await getAgent(apiKey, agent.id);
+      setActiveAgentName(detail.name);
+
+      const runs = await listAgentRuns(apiKey, agent.id);
+      setMessages(
+        runsToChatMessages(runs).map((m) => ({ ...m, streaming: false }))
+      );
+
+      const activeRun =
+        [...runs]
+          .reverse()
+          .find((run) => isActiveRunStatus(run.status)) ??
+        (detail.latestRunId
+          ? runs.find((run) => run.id === detail.latestRunId)
+          : undefined);
+
+      if (activeRun && isActiveRunStatus(activeRun.status)) {
+        setIsSending(true);
+        setCurrentRunId(activeRun.id);
+        setRunStatus(activeRun.status);
+        void consumeStream(agent.id, activeRun.id);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingHistory(false);
+    }
   };
 
   const consumeStream = async (agentId: string, runId: string) => {
@@ -358,18 +408,37 @@ export function App() {
         <Sidebar
           agents={agents}
           activeId={activeAgentId}
-          onSelect={openAgent}
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          onSelect={(agent) => {
+            setSidebarOpen(false);
+            void openAgent(agent);
+          }}
           onNew={() => {
             setActiveAgentId(null);
             setMessages([]);
             setView("idea");
+            setSidebarOpen(false);
           }}
-          onSettings={() => setView("settings")}
+          onSettings={() => {
+            setView("settings");
+            setSidebarOpen(false);
+          }}
           accountLabel={accountLabel}
         />
         <div className="main">
           <header className="topbar">
-            <span className="brand">Cursor Pocket</span>
+            <div className="topbar-start">
+              <button
+                type="button"
+                className="btn btn-ghost mobile-only"
+                aria-label="Open agents"
+                onClick={() => setSidebarOpen(true)}
+              >
+                ☰
+              </button>
+              <span className="brand">Cursor Pocket</span>
+            </div>
             <button type="button" className="btn btn-ghost" onClick={() => setView("settings")}>
               Settings
             </button>
@@ -404,21 +473,47 @@ export function App() {
 
   return (
     <div className="app-shell">
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close agents"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       <Sidebar
         agents={agents}
         activeId={activeAgentId}
-        onSelect={openAgent}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onSelect={(agent) => {
+          setSidebarOpen(false);
+          void openAgent(agent);
+        }}
         onNew={() => {
           setActiveAgentId(null);
           setMessages([]);
           setView("idea");
+          setSidebarOpen(false);
         }}
-        onSettings={() => setView("settings")}
+        onSettings={() => {
+          setView("settings");
+          setSidebarOpen(false);
+        }}
         accountLabel={accountLabel}
       />
       <div className="main">
         <header className="topbar">
-          <div>
+          <div className="topbar-start">
+            <button
+              type="button"
+              className="btn btn-ghost mobile-only"
+              aria-label="Open agents"
+              onClick={() => setSidebarOpen(true)}
+            >
+              ☰
+            </button>
+            <div>
             <div className="brand">{activeAgentName}</div>
             {activeAgentId && (
               <a
@@ -430,6 +525,7 @@ export function App() {
                 Open in Cursor →
               </a>
             )}
+            </div>
           </div>
           <button type="button" className="btn btn-ghost" onClick={() => setView("idea")}>
             New idea
@@ -437,14 +533,22 @@ export function App() {
         </header>
 
         <div className="chat">
-          {messages.length === 0 && (
+          {loadingHistory && (
+            <p className="muted">Loading conversation…</p>
+          )}
+          {!loadingHistory && messages.length === 0 && (
             <p className="muted">Send a message to continue this agent.</p>
           )}
           {messages.map((m) => (
             <div key={m.id} className={`bubble ${m.role}`}>
-              {m.text || (m.streaming ? "…" : "")}
+              {m.role === "assistant" ? (
+                <MarkdownContent text={m.text} streaming={m.streaming} />
+              ) : (
+                m.text
+              )}
             </div>
           ))}
+          <div ref={chatEndRef} />
         </div>
 
         {runStatus && isSending && (
@@ -500,6 +604,8 @@ export function App() {
 function Sidebar({
   agents,
   activeId,
+  open,
+  onClose,
   onSelect,
   onNew,
   onSettings,
@@ -507,13 +613,20 @@ function Sidebar({
 }: {
   agents: AgentSummary[];
   activeId: string | null;
+  open?: boolean;
+  onClose?: () => void;
   onSelect: (a: AgentSummary) => void;
   onNew: () => void;
   onSettings: () => void;
   accountLabel: string | null;
 }) {
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${open ? " open" : ""}`}>
+      {onClose && (
+        <button type="button" className="btn btn-ghost mobile-only sidebar-close" onClick={onClose}>
+          ✕
+        </button>
+      )}
       <div className="brand">Pocket</div>
       {accountLabel && <div className="muted">{accountLabel}</div>}
       <button type="button" className="btn btn-primary" onClick={onNew}>

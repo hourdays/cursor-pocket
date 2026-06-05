@@ -14,6 +14,11 @@ import {
   streamRun,
   validateAPIKey,
 } from "@shared/api/cloudAgentsClient";
+import {
+  allowedEmailHint,
+  assertEmailAllowed,
+  isAccessControlEnabled,
+} from "./access";
 import { MarkdownContent } from "./MarkdownContent";
 import {
   clearAPIKey,
@@ -71,9 +76,16 @@ export function App() {
     }
     try {
       const info = await validateAPIKey(apiKey);
+      assertEmailAllowed(info.userEmail);
       setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
-    } catch {
+    } catch (e) {
       setAccountLabel(null);
+      if (e instanceof Error && isAccessControlEnabled()) {
+        clearAPIKey();
+        setApiKey(null);
+        setView("connect");
+        setError(e.message);
+      }
     }
   }, [apiKey]);
 
@@ -95,12 +107,13 @@ export function App() {
       return;
     }
     try {
-      await validateAPIKey(trimmed);
+      const info = await validateAPIKey(trimmed);
+      assertEmailAllowed(info.userEmail);
       saveAPIKey(trimmed);
       setApiKey(trimmed);
       setView("idea");
       setKeyDraft("");
-      await refreshAccount();
+      setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
       await refreshAgents();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -337,6 +350,12 @@ export function App() {
         <button type="button" className="btn btn-primary" onClick={() => void connect()}>
           Connect account
         </button>
+        {isAccessControlEnabled() && allowedEmailHint() && (
+          <p className="muted" style={{ fontSize: "0.8rem" }}>
+            This site is private — only <strong>{allowedEmailHint()}</strong> can
+            connect.
+          </p>
+        )}
         <p className="muted" style={{ fontSize: "0.8rem" }}>
           Unofficial client — not affiliated with Cursor / Anysphere. Web stores
           your key in this browser only.

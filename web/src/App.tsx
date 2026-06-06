@@ -8,6 +8,7 @@ import {
   getAgent,
   getRun,
   isActiveRunStatus,
+  loadAgentRunDetails,
   listAgentRuns,
   listAgents,
   runsToChatMessages,
@@ -22,9 +23,12 @@ import {
 import { MarkdownContent } from "./MarkdownContent";
 import {
   clearAPIKey,
+  clearRunPrompts,
   loadAPIKey,
+  loadRunPrompts,
   loadSettings,
   saveAPIKey,
+  saveRunPrompt,
   saveSettings,
 } from "./storage";
 
@@ -123,6 +127,7 @@ export function App() {
   const signOut = () => {
     abortRef.current?.abort();
     clearAPIKey();
+    clearRunPrompts();
     setApiKey(null);
     setAccountLabel(null);
     setAgents([]);
@@ -152,16 +157,20 @@ export function App() {
       setActiveAgentName(detail.name);
 
       const runs = await listAgentRuns(apiKey, agent.id);
+      const detailedRuns = await loadAgentRunDetails(apiKey, agent.id, runs);
       setMessages(
-        runsToChatMessages(runs).map((m) => ({ ...m, streaming: false }))
+        runsToChatMessages(detailedRuns, loadRunPrompts(agent.id)).map((m) => ({
+          ...m,
+          streaming: false,
+        }))
       );
 
       const activeRun =
-        [...runs]
+        [...detailedRuns]
           .reverse()
           .find((run) => isActiveRunStatus(run.status)) ??
         (detail.latestRunId
-          ? runs.find((run) => run.id === detail.latestRunId)
+          ? detailedRuns.find((run) => run.id === detail.latestRunId)
           : undefined);
 
       if (activeRun && isActiveRunStatus(activeRun.status)) {
@@ -294,6 +303,7 @@ export function App() {
     try {
       if (options.newAgent) {
         const response = await createAgent(apiKey, prompt, settings);
+        saveRunPrompt(response.agent.id, response.run.id, prompt);
         setActiveAgentId(response.agent.id);
         setActiveAgentName(response.agent.name);
         setCurrentRunId(response.run.id);
@@ -301,6 +311,7 @@ export function App() {
         await consumeStream(response.agent.id, response.run.id);
       } else if (activeAgentId) {
         const run = await createRun(apiKey, activeAgentId, prompt);
+        saveRunPrompt(activeAgentId, run.id, prompt);
         setCurrentRunId(run.id);
         await consumeStream(activeAgentId, run.id);
       }

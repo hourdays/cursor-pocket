@@ -150,6 +150,19 @@ export async function listAgentRuns(
   return response.items ?? [];
 }
 
+export async function loadAgentRunDetails(
+  apiKey: string,
+  agentId: string,
+  runs: AgentRun[]
+): Promise<AgentRun[]> {
+  return Promise.all(
+    runs.map(async (run) => ({
+      ...run,
+      ...(await getRun(apiKey, agentId, run.id)),
+    }))
+  );
+}
+
 const ACTIVE_RUN_STATUSES = new Set([
   "CREATING",
   "PENDING",
@@ -163,7 +176,8 @@ export function isActiveRunStatus(status: string): boolean {
 
 /** Chronological user/assistant pairs from completed or in-progress runs. */
 export function runsToChatMessages(
-  runs: AgentRun[]
+  runs: AgentRun[],
+  cachedPrompts: Record<string, string | undefined> = {}
 ): { id: string; role: "user" | "assistant"; text: string }[] {
   const sorted = [...runs].sort((a, b) =>
     (a.createdAt ?? "").localeCompare(b.createdAt ?? "")
@@ -172,7 +186,7 @@ export function runsToChatMessages(
     [];
 
   for (const run of sorted) {
-    const userText = run.prompt?.text?.trim();
+    const userText = run.prompt?.text?.trim() || cachedPrompts[run.id]?.trim();
     if (userText) {
       messages.push({ id: `user-${run.id}`, role: "user", text: userText });
     }

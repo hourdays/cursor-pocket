@@ -15,6 +15,7 @@ import {
   validateAPIKey,
 } from "@shared/api/cloudAgentsClient";
 import {
+  AccessControlError,
   allowedEmailHint,
   assertEmailAllowed,
   isAccessControlEnabled,
@@ -80,11 +81,13 @@ export function App() {
       setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
     } catch (e) {
       setAccountLabel(null);
-      if (e instanceof Error && isAccessControlEnabled()) {
+      if (e instanceof AccessControlError && isAccessControlEnabled()) {
         clearAPIKey();
         setApiKey(null);
         setView("connect");
         setError(e.message);
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
       }
     }
   }, [apiKey]);

@@ -4,7 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const baseURL = "http://127.0.0.1:5173/";
+const port = "5187";
+const baseURL = `http://127.0.0.1:${port}/`;
 const allowedEmail = "allowed@example.com";
 const storageKey = "cursor-pocket.apiKey";
 const apiKey = "test-api-key";
@@ -62,7 +63,10 @@ async function runScenario(browser, name, meResponse, expectedStoredKey) {
   await page.goto(baseURL, { waitUntil: "domcontentloaded" });
   await waitFor(() => meRequests > 0, `${name}: /me was not requested`);
 
-  const storedKey = await page.evaluate((key) => localStorage.getItem(key), storageKey);
+  const storedKey = await page.evaluate(
+    (key) => localStorage.getItem(key),
+    storageKey
+  );
   if (storedKey !== expectedStoredKey) {
     throw new Error(
       `${name}: expected stored key ${JSON.stringify(
@@ -75,20 +79,51 @@ async function runScenario(browser, name, meResponse, expectedStoredKey) {
   console.log(`ok - ${name}`);
 }
 
-const server = spawn("npm", ["run", "dev", "--", "--host", "127.0.0.1"], {
-  cwd: root,
-  env: {
-    ...process.env,
-    VITE_ALLOWED_EMAIL: allowedEmail,
-  },
-  stdio: "pipe",
+const server = spawn(
+  "npm",
+  ["run", "dev", "--", "--host", "127.0.0.1", "--port", port, "--strictPort"],
+  {
+    cwd: root,
+    env: {
+      ...process.env,
+      VITE_ALLOWED_EMAIL: allowedEmail,
+    },
+    detached: true,
+    stdio: "pipe",
+  }
+);
+let serverExited = false;
+const serverExit = new Promise((resolve) => {
+  server.on("exit", (code, signal) => {
+    serverExited = true;
+    resolve({ code, signal });
+  });
 });
 
 server.stdout.on("data", (chunk) => process.stdout.write(chunk));
 server.stderr.on("data", (chunk) => process.stderr.write(chunk));
 
+async function stopServer() {
+  if (!serverExited && server.pid) {
+    process.kill(-server.pid, "SIGTERM");
+    await Promise.race([
+      serverExit,
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ]);
+  }
+}
+
 try {
-  await waitForServer(baseURL);
+  await Promise.race([
+    waitForServer(baseURL),
+    serverExit.then(({ code, signal }) => {
+      throw new Error(
+        `Vite exited before startup (code ${code ?? "none"}, signal ${
+          signal ?? "none"
+        })`
+      );
+    }),
+  ]);
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
 
@@ -118,5 +153,5 @@ try {
     await browser.close();
   }
 } finally {
-  server.kill();
+  await stopServer();
 }

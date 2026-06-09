@@ -189,34 +189,50 @@ export function App() {
     let assistantId: string | null = null;
 
     const appendAssistant = (delta: string) => {
-      setMessages((prev) => {
-        if (assistantId) {
-          return prev.map((m) =>
-            m.id === assistantId ? { ...m, text: m.text + delta } : m
-          );
-        }
-        const id = crypto.randomUUID();
-        assistantId = id;
-        return [
-          ...prev,
-          { id, role: "assistant", text: delta, streaming: true },
-        ];
-      });
+      if (assistantId) {
+        const id = assistantId;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id ? { ...m, text: m.text + delta } : m
+          )
+        );
+        return;
+      }
+
+      const id = crypto.randomUUID();
+      assistantId = id;
+      setMessages((prev) => [
+        ...prev,
+        { id, role: "assistant", text: delta, streaming: true },
+      ]);
     };
 
     const finalize = (text?: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) {
-            return m;
-          }
-          return {
-            ...m,
-            text: text && text.length > 0 ? text : m.text,
-            streaming: false,
-          };
-        })
-      );
+      if (assistantId) {
+        const id = assistantId;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== id) {
+              return m;
+            }
+            return {
+              ...m,
+              text: text && text.length > 0 ? text : m.text,
+              streaming: false,
+            };
+          })
+        );
+        return;
+      }
+
+      if (text && text.length > 0) {
+        const id = crypto.randomUUID();
+        assistantId = id;
+        setMessages((prev) => [
+          ...prev,
+          { id, role: "assistant", text, streaming: false },
+        ]);
+      }
     };
 
     try {

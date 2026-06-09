@@ -152,7 +152,12 @@ final class CloudAgentsClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var url = baseURL.appendingPathComponent("agents/\(agentId)/runs/\(runId)/stream")
+                    let url = baseURL
+                        .appendingPathComponent("agents")
+                        .appendingPathComponent(agentId)
+                        .appendingPathComponent("runs")
+                        .appendingPathComponent(runId)
+                        .appendingPathComponent("stream")
                     var request = URLRequest(url: url)
                     request.httpMethod = "GET"
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")

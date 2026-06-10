@@ -96,7 +96,7 @@ async function runAccessScenario(browser, name, meResponse, expectedStoredKey) {
 async function runAgentSwitchRace(browser) {
   const context = await newKeyedContext(browser);
   const page = await context.newPage();
-  let staleRunsReturned = false;
+  let staleDetailReturned = false;
 
   await page.route("https://api.cursor.com/v1/**", async (route) => {
     const url = new URL(route.request().url());
@@ -121,6 +121,7 @@ async function runAgentSwitchRace(browser) {
 
     if (pathname === "/v1/agents/agent-a") {
       await delay(500);
+      staleDetailReturned = true;
       await route.fulfill(
         jsonResponse(200, { id: "agent-a", name: "Agent A detail", status: "IDLE" })
       );
@@ -128,22 +129,7 @@ async function runAgentSwitchRace(browser) {
     }
 
     if (pathname === "/v1/agents/agent-a/runs") {
-      staleRunsReturned = true;
-      await route.fulfill(
-        jsonResponse(200, {
-          items: [
-            {
-              id: "run-a",
-              agentId: "agent-a",
-              status: "FINISHED",
-              prompt: { text: "Agent A question" },
-              result: "Agent A stale answer",
-              createdAt: "2026-06-10T11:00:00.000Z",
-            },
-          ],
-        })
-      );
-      return;
+      throw new Error("agent switch race: stale run history should not be requested");
     }
 
     if (pathname === "/v1/agents/agent-b") {
@@ -183,8 +169,8 @@ async function runAgentSwitchRace(browser) {
     "agent switch race: current agent history did not render"
   );
   await waitFor(
-    () => staleRunsReturned,
-    "agent switch race: stale request did not complete"
+    () => staleDetailReturned,
+    "agent switch race: stale detail request did not complete"
   );
   await delay(100);
 

@@ -15,6 +15,7 @@ import {
   validateAPIKey,
 } from "@shared/api/cloudAgentsClient";
 import {
+  AccessControlError,
   allowedEmailHint,
   assertEmailAllowed,
   isAccessControlEnabled,
@@ -57,6 +58,19 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const activeAgentIdRef = useRef<string | null>(activeAgentId);
+  const apiKeyRef = useRef<string | null>(apiKey);
+  const agentSelectionRef = useRef(0);
+  const streamRef = useRef(0);
+
+  const setSelectedAgentId = (agentId: string | null) => {
+    activeAgentIdRef.current = agentId;
+    setActiveAgentId(agentId);
+  };
+
+  useEffect(() => {
+    apiKeyRef.current = apiKey;
+  }, [apiKey]);
 
   const refreshAgents = useCallback(async () => {
     if (!apiKey) {
@@ -80,11 +94,14 @@ export function App() {
       setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
     } catch (e) {
       setAccountLabel(null);
-      if (e instanceof Error && isAccessControlEnabled()) {
+      if (e instanceof AccessControlError && isAccessControlEnabled()) {
         clearAPIKey();
+        apiKeyRef.current = null;
         setApiKey(null);
         setView("connect");
         setError(e.message);
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
       }
     }
   }, [apiKey]);
@@ -121,14 +138,31 @@ export function App() {
   };
 
   const signOut = () => {
+    agentSelectionRef.current += 1;
+    streamRef.current += 1;
     abortRef.current?.abort();
     clearAPIKey();
+    apiKeyRef.current = null;
     setApiKey(null);
     setAccountLabel(null);
     setAgents([]);
     setMessages([]);
-    setActiveAgentId(null);
+    setSelectedAgentId(null);
     setView("connect");
+  };
+
+  const startNewConversation = () => {
+    agentSelectionRef.current += 1;
+    streamRef.current += 1;
+    abortRef.current?.abort();
+    setSelectedAgentId(null);
+    setActiveAgentName("New chat");
+    setMessages([]);
+    setCurrentRunId(null);
+    setRunStatus(null);
+    setIsSending(false);
+    setView("idea");
+    setSidebarOpen(false);
   };
 
   const openAgent = async (agent: AgentSummary) => {
@@ -136,8 +170,16 @@ export function App() {
       return;
     }
 
+    const selectionId = agentSelectionRef.current + 1;
+    agentSelectionRef.current = selectionId;
+    streamRef.current += 1;
+    const isCurrentSelection = () =>
+      agentSelectionRef.current === selectionId &&
+      activeAgentIdRef.current === agent.id &&
+      apiKeyRef.current === apiKey;
+
     abortRef.current?.abort();
-    setActiveAgentId(agent.id);
+    setSelectedAgentId(agent.id);
     setActiveAgentName(agent.name);
     setMessages([]);
     setView("chat");
@@ -149,9 +191,15 @@ export function App() {
 
     try {
       const detail = await getAgent(apiKey, agent.id);
+      if (!isCurrentSelection()) {
+        return;
+      }
       setActiveAgentName(detail.name);
 
       const runs = await listAgentRuns(apiKey, agent.id);
+      if (!isCurrentSelection()) {
+        return;
+      }
       setMessages(
         runsToChatMessages(runs).map((m) => ({ ...m, streaming: false }))
       );
@@ -171,9 +219,13 @@ export function App() {
         void consumeStream(agent.id, activeRun.id);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isCurrentSelection()) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
-      setLoadingHistory(false);
+      if (isCurrentSelection()) {
+        setLoadingHistory(false);
+      }
     }
   };
 
@@ -182,6 +234,13 @@ export function App() {
       return;
     }
 
+    const streamId = streamRef.current + 1;
+    streamRef.current = streamId;
+    const isCurrentStream = () =>
+      streamRef.current === streamId &&
+      activeAgentIdRef.current === agentId &&
+      apiKeyRef.current === apiKey;
+
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -189,34 +248,68 @@ export function App() {
     let assistantId: string | null = null;
 
     const appendAssistant = (delta: string) => {
-      setMessages((prev) => {
-        if (assistantId) {
-          return prev.map((m) =>
-            m.id === assistantId ? { ...m, text: m.text + delta } : m
-          );
-        }
-        const id = crypto.randomUUID();
-        assistantId = id;
-        return [
-          ...prev,
-          { id, role: "assistant", text: delta, streaming: true },
-        ];
-      });
+      if (!isCurrentStream()) {
+        return;
+      }
+      if (assistantId) {
+        const id = assistantId;
+        setMessages((prev) =>
+          isCurrentStream()
+            ? prev.map((m) =>
+                m.id === id ? { ...m, text: m.text + delta } : m
+              )
+            : prev
+        );
+        return;
+      }
+
+      const id = crypto.randomUUID();
+      assistantId = id;
+      setMessages((prev) =>
+        isCurrentStream()
+          ? [
+              ...prev,
+              { id, role: "assistant", text: delta, streaming: true },
+            ]
+          : prev
+      );
     };
 
     const finalize = (text?: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) {
-            return m;
-          }
-          return {
-            ...m,
-            text: text && text.length > 0 ? text : m.text,
-            streaming: false,
-          };
-        })
-      );
+      if (!isCurrentStream()) {
+        return;
+      }
+      if (assistantId) {
+        const id = assistantId;
+        setMessages((prev) =>
+          isCurrentStream()
+            ? prev.map((m) => {
+                if (m.id !== id) {
+                  return m;
+                }
+                return {
+                  ...m,
+                  text: text && text.length > 0 ? text : m.text,
+                  streaming: false,
+                };
+              })
+            : prev
+        );
+        return;
+      }
+
+      if (text && text.length > 0) {
+        const id = crypto.randomUUID();
+        assistantId = id;
+        setMessages((prev) =>
+          isCurrentStream()
+            ? [
+                ...prev,
+                { id, role: "assistant", text, streaming: false },
+              ]
+            : prev
+        );
+      }
     };
 
     try {
@@ -225,6 +318,9 @@ export function App() {
         agentId,
         runId,
         (event) => {
+          if (!isCurrentStream()) {
+            return;
+          }
           switch (event.type) {
             case "status":
               setRunStatus(event.status);
@@ -249,7 +345,13 @@ export function App() {
         controller.signal
       );
 
+      if (!isCurrentStream()) {
+        return;
+      }
       const run = await getRun(apiKey, agentId, runId);
+      if (!isCurrentStream()) {
+        return;
+      }
       setRunStatus(run.status);
       if (run.result) {
         finalize(run.result);
@@ -260,10 +362,16 @@ export function App() {
       if (controller.signal.aborted) {
         return;
       }
+      if (!isCurrentStream()) {
+        return;
+      }
       const message = e instanceof Error ? e.message : String(e);
       if (message.includes("expired") && apiKey) {
         try {
           const run = await getRun(apiKey, agentId, runId);
+          if (!isCurrentStream()) {
+            return;
+          }
           finalize(run.result);
           setRunStatus(run.status);
         } catch {
@@ -293,16 +401,24 @@ export function App() {
 
     try {
       if (options.newAgent) {
+        streamRef.current += 1;
         const response = await createAgent(apiKey, prompt, settings);
-        setActiveAgentId(response.agent.id);
+        if (apiKeyRef.current !== apiKey) {
+          return;
+        }
+        setSelectedAgentId(response.agent.id);
         setActiveAgentName(response.agent.name);
         setCurrentRunId(response.run.id);
         await refreshAgents();
         await consumeStream(response.agent.id, response.run.id);
       } else if (activeAgentId) {
+        const agentId = activeAgentId;
         const run = await createRun(apiKey, activeAgentId, prompt);
+        if (activeAgentIdRef.current !== agentId || apiKeyRef.current !== apiKey) {
+          return;
+        }
         setCurrentRunId(run.id);
-        await consumeStream(activeAgentId, run.id);
+        await consumeStream(agentId, run.id);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -434,10 +550,7 @@ export function App() {
             void openAgent(agent);
           }}
           onNew={() => {
-            setActiveAgentId(null);
-            setMessages([]);
-            setView("idea");
-            setSidebarOpen(false);
+            startNewConversation();
           }}
           onSettings={() => {
             setView("settings");
@@ -510,10 +623,7 @@ export function App() {
           void openAgent(agent);
         }}
         onNew={() => {
-          setActiveAgentId(null);
-          setMessages([]);
-          setView("idea");
-          setSidebarOpen(false);
+          startNewConversation();
         }}
         onSettings={() => {
           setView("settings");
@@ -582,6 +692,7 @@ export function App() {
               e.preventDefault();
               if (isSending && activeAgentId && apiKey && currentRunId) {
                 void (async () => {
+                  streamRef.current += 1;
                   abortRef.current?.abort();
                   await cancelRun(apiKey, activeAgentId, currentRunId);
                   setIsSending(false);

@@ -17,6 +17,7 @@ xcuserdata/
 # Web
 web/node_modules/
 web/dist/
+web/.test-dist/
 
 # macOS
 .DS_Store

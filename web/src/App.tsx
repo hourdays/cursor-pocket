@@ -27,15 +27,13 @@ import {
   saveAPIKey,
   saveSettings,
 } from "./storage";
+import {
+  appendAssistantDelta,
+  finalizeAssistantMessage,
+  type ChatMessage,
+} from "./chatStreamMessages";
 
 type View = "connect" | "idea" | "chat" | "settings";
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  streaming?: boolean;
-}
 
 export function App() {
   const [apiKey, setApiKey] = useState<string | null>(() => loadAPIKey());
@@ -56,7 +54,30 @@ export function App() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const streamRef = useRef<{
+    token: number;
+    sessionToken: number;
+    controller: AbortController;
+  } | null>(null);
+  const nextStreamTokenRef = useRef(0);
+  const sessionTokenRef = useRef(0);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  const abortActiveStream = () => {
+    streamRef.current?.controller.abort();
+    abortRef.current?.abort();
+    streamRef.current = null;
+    abortRef.current = null;
+  };
+
+  const startSessionTransition = () => {
+    sessionTokenRef.current += 1;
+    abortActiveStream();
+    return sessionTokenRef.current;
+  };
+
+  const isSessionCurrent = (sessionToken: number) =>
+    sessionTokenRef.current === sessionToken;
 
   const refreshAgents = useCallback(async () => {
     if (!apiKey) {
@@ -121,7 +142,7 @@ export function App() {
   };
 
   const signOut = () => {
-    abortRef.current?.abort();
+    startSessionTransition();
     clearAPIKey();
     setApiKey(null);
     setAccountLabel(null);
@@ -136,7 +157,7 @@ export function App() {
       return;
     }
 
-    abortRef.current?.abort();
+    const sessionToken = startSessionTransition();
     setActiveAgentId(agent.id);
     setActiveAgentName(agent.name);
     setMessages([]);
@@ -149,9 +170,15 @@ export function App() {
 
     try {
       const detail = await getAgent(apiKey, agent.id);
+      if (!isSessionCurrent(sessionToken)) {
+        return;
+      }
       setActiveAgentName(detail.name);
 
       const runs = await listAgentRuns(apiKey, agent.id);
+      if (!isSessionCurrent(sessionToken)) {
+        return;
+      }
       setMessages(
         runsToChatMessages(runs).map((m) => ({ ...m, streaming: false }))
       );
@@ -171,9 +198,13 @@ export function App() {
         void consumeStream(agent.id, activeRun.id);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isSessionCurrent(sessionToken)) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
-      setLoadingHistory(false);
+      if (isSessionCurrent(sessionToken)) {
+        setLoadingHistory(false);
+      }
     }
   };
 
@@ -182,40 +213,59 @@ export function App() {
       return;
     }
 
-    abortRef.current?.abort();
+    const sessionToken = sessionTokenRef.current;
+    abortActiveStream();
     const controller = new AbortController();
+    const streamToken = nextStreamTokenRef.current + 1;
+    nextStreamTokenRef.current = streamToken;
     abortRef.current = controller;
+    streamRef.current = { token: streamToken, sessionToken, controller };
 
     let assistantId: string | null = null;
+    const isCurrentStream = () =>
+      streamRef.current?.token === streamToken &&
+      streamRef.current.sessionToken === sessionToken &&
+      sessionTokenRef.current === sessionToken &&
+      !controller.signal.aborted;
+
+    const clearCurrentStream = () => {
+      if (streamRef.current?.token === streamToken) {
+        streamRef.current = null;
+        abortRef.current = null;
+      }
+    };
 
     const appendAssistant = (delta: string) => {
+      if (!isCurrentStream()) {
+        return;
+      }
+      if (!assistantId) {
+        assistantId = crypto.randomUUID();
+      }
+      const targetId = assistantId;
       setMessages((prev) => {
-        if (assistantId) {
-          return prev.map((m) =>
-            m.id === assistantId ? { ...m, text: m.text + delta } : m
-          );
+        if (!isCurrentStream()) {
+          return prev;
         }
-        const id = crypto.randomUUID();
-        assistantId = id;
-        return [
-          ...prev,
-          { id, role: "assistant", text: delta, streaming: true },
-        ];
+        return appendAssistantDelta(prev, targetId, delta);
       });
     };
 
     const finalize = (text?: string) => {
+      if (!isCurrentStream()) {
+        return;
+      }
+      if (!assistantId && text && text.length > 0) {
+        assistantId = crypto.randomUUID();
+      }
+      const targetId = assistantId;
+      if (!targetId) {
+        return;
+      }
       setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) {
-            return m;
-          }
-          return {
-            ...m,
-            text: text && text.length > 0 ? text : m.text,
-            streaming: false,
-          };
-        })
+        isCurrentStream()
+          ? finalizeAssistantMessage(prev, targetId, text)
+          : prev
       );
     };
 
@@ -227,52 +277,76 @@ export function App() {
         (event) => {
           switch (event.type) {
             case "status":
-              setRunStatus(event.status);
+              if (isCurrentStream()) {
+                setRunStatus(event.status);
+              }
               break;
             case "assistant":
               appendAssistant(event.text);
               break;
             case "result":
-              setRunStatus(event.status);
+              if (isCurrentStream()) {
+                setRunStatus(event.status);
+              }
               finalize(event.text);
               break;
             case "done":
               finalize();
-              setIsSending(false);
+              if (isCurrentStream()) {
+                setIsSending(false);
+              }
               break;
             case "error":
-              setError(event.message);
-              setIsSending(false);
+              if (isCurrentStream()) {
+                setError(event.message);
+                setIsSending(false);
+              }
               break;
           }
         },
         controller.signal
       );
 
-      const run = await getRun(apiKey, agentId, runId);
-      setRunStatus(run.status);
-      if (run.result) {
-        finalize(run.result);
+      if (!isCurrentStream()) {
+        return;
       }
-      setIsSending(false);
-      setCurrentRunId(null);
+      const run = await getRun(apiKey, agentId, runId);
+      if (isCurrentStream()) {
+        setRunStatus(run.status);
+        if (run.result) {
+          finalize(run.result);
+        }
+        setIsSending(false);
+        setCurrentRunId(null);
+        clearCurrentStream();
+      }
     } catch (e) {
-      if (controller.signal.aborted) {
+      if (controller.signal.aborted || !isCurrentStream()) {
         return;
       }
       const message = e instanceof Error ? e.message : String(e);
       if (message.includes("expired") && apiKey) {
         try {
           const run = await getRun(apiKey, agentId, runId);
-          finalize(run.result);
-          setRunStatus(run.status);
+          if (isCurrentStream()) {
+            finalize(run.result);
+            setRunStatus(run.status);
+          }
         } catch {
-          setError(message);
+          if (isCurrentStream()) {
+            setError(message);
+          }
         }
       } else {
-        setError(message);
+        if (isCurrentStream()) {
+          setError(message);
+        }
       }
-      setIsSending(false);
+      if (isCurrentStream()) {
+        setIsSending(false);
+        setCurrentRunId(null);
+        clearCurrentStream();
+      }
     }
   };
 
@@ -281,7 +355,16 @@ export function App() {
       return;
     }
 
+    const sessionToken = options.newAgent
+      ? startSessionTransition()
+      : sessionTokenRef.current;
     const prompt = text.trim();
+    if (options.newAgent) {
+      setActiveAgentId(null);
+      setActiveAgentName("New chat");
+      setMessages([]);
+      setCurrentRunId(null);
+    }
     setMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "user", text: prompt },
@@ -294,6 +377,9 @@ export function App() {
     try {
       if (options.newAgent) {
         const response = await createAgent(apiKey, prompt, settings);
+        if (!isSessionCurrent(sessionToken)) {
+          return;
+        }
         setActiveAgentId(response.agent.id);
         setActiveAgentName(response.agent.name);
         setCurrentRunId(response.run.id);
@@ -301,12 +387,17 @@ export function App() {
         await consumeStream(response.agent.id, response.run.id);
       } else if (activeAgentId) {
         const run = await createRun(apiKey, activeAgentId, prompt);
+        if (!isSessionCurrent(sessionToken)) {
+          return;
+        }
         setCurrentRunId(run.id);
         await consumeStream(activeAgentId, run.id);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setIsSending(false);
+      if (isSessionCurrent(sessionToken)) {
+        setError(e instanceof Error ? e.message : String(e));
+        setIsSending(false);
+      }
     }
   };
 
@@ -434,6 +525,7 @@ export function App() {
             void openAgent(agent);
           }}
           onNew={() => {
+            startSessionTransition();
             setActiveAgentId(null);
             setMessages([]);
             setView("idea");
@@ -510,6 +602,7 @@ export function App() {
           void openAgent(agent);
         }}
         onNew={() => {
+          startSessionTransition();
           setActiveAgentId(null);
           setMessages([]);
           setView("idea");

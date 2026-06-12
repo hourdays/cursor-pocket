@@ -205,18 +205,33 @@ export function App() {
     };
 
     const finalize = (text?: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
+      const finalText = text && text.length > 0 ? text : undefined;
+
+      setMessages((prev) => {
+        if (!assistantId) {
+          if (!finalText) {
+            return prev;
+          }
+
+          const id = crypto.randomUUID();
+          assistantId = id;
+          return [
+            ...prev,
+            { id, role: "assistant", text: finalText, streaming: false },
+          ];
+        }
+
+        return prev.map((m) => {
           if (m.id !== assistantId) {
             return m;
           }
           return {
             ...m,
-            text: text && text.length > 0 ? text : m.text,
+            text: finalText ?? m.text,
             streaming: false,
           };
-        })
-      );
+        });
+      });
     };
 
     try {

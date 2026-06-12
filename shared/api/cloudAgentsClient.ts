@@ -292,6 +292,20 @@ export async function streamRun(
     dataLines = [];
   };
 
+  const processLine = (line: string) => {
+    const normalizedLine = line.endsWith("\r") ? line.slice(0, -1) : line;
+
+    if (normalizedLine === "") {
+      flush();
+      return;
+    }
+    if (normalizedLine.startsWith("event:")) {
+      currentEvent = normalizedLine.slice(6).trim();
+    } else if (normalizedLine.startsWith("data:")) {
+      dataLines.push(normalizedLine.slice(5).trim());
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) {
@@ -303,15 +317,14 @@ export async function streamRun(
     buffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      if (line === "") {
-        flush();
-        continue;
-      }
-      if (line.startsWith("event:")) {
-        currentEvent = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        dataLines.push(line.slice(5).trim());
-      }
+      processLine(line);
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer) {
+    for (const line of buffer.split("\n")) {
+      processLine(line);
     }
   }
 

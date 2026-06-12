@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "test:chat-stream": "tsx --test tests/chat-stream.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "playwright": "^1.49.1",
+    "tsx": "^4.22.4",
     "typescript": "~5.7.2",
     "vite": "^6.0.3"
   }

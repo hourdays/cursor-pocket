@@ -31,4 +31,15 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ENABLE_PREVIEWS: YES
     scheme:
-      testTargets: []
+      testTargets:
+        - CursorPocketTests
+  CursorPocketTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: CursorPocketTests
+    dependencies:
+      - target: CursorPocket
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hourdays.CursorPocketTests

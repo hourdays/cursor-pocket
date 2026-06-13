@@ -41,7 +41,7 @@ final class ChatSessionModel: ObservableObject {
 
         do {
             let run: AgentRun
-            if isNewAgent {
+            if isNewAgent && agentId.isEmpty {
                 let response = try await appModel.createAgent(prompt: trimmed)
                 agentId = response.agent.id
                 agentName = response.agent.name

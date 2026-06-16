@@ -3,6 +3,7 @@ import type { AgentSummary, AppSettings } from "@shared/api/types";
 import {
   agentWebURL,
   cancelRun,
+  CloudAgentsError,
   createAgent,
   createRun,
   getAgent,
@@ -15,6 +16,7 @@ import {
   validateAPIKey,
 } from "@shared/api/cloudAgentsClient";
 import {
+  AccessControlError,
   allowedEmailHint,
   assertEmailAllowed,
   isAccessControlEnabled,
@@ -56,7 +58,23 @@ export function App() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const activeAgentIdRef = useRef<string | null>(null);
+  const selectionSessionRef = useRef(0);
+  const streamSessionRef = useRef(0);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  const setActiveAgent = (agentId: string | null) => {
+    selectionSessionRef.current += 1;
+    activeAgentIdRef.current = agentId;
+    setActiveAgentId(agentId);
+    return selectionSessionRef.current;
+  };
+
+  const invalidateActiveStream = () => {
+    streamSessionRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+  };
 
   const refreshAgents = useCallback(async () => {
     if (!apiKey) {
@@ -80,11 +98,19 @@ export function App() {
       setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
     } catch (e) {
       setAccountLabel(null);
-      if (e instanceof Error && isAccessControlEnabled()) {
+      const shouldForgetKey =
+        e instanceof AccessControlError ||
+        (isAccessControlEnabled() &&
+          e instanceof CloudAgentsError &&
+          (e.status === 401 || e.status === 403));
+
+      if (shouldForgetKey) {
         clearAPIKey();
         setApiKey(null);
         setView("connect");
-        setError(e.message);
+        setError(e instanceof Error ? e.message : String(e));
+      } else if (isAccessControlEnabled()) {
+        setError(e instanceof Error ? e.message : String(e));
       }
     }
   }, [apiKey]);
@@ -121,14 +147,26 @@ export function App() {
   };
 
   const signOut = () => {
-    abortRef.current?.abort();
+    invalidateActiveStream();
     clearAPIKey();
     setApiKey(null);
     setAccountLabel(null);
     setAgents([]);
     setMessages([]);
-    setActiveAgentId(null);
+    setActiveAgent(null);
     setView("connect");
+  };
+
+  const startNewIdeaView = () => {
+    invalidateActiveStream();
+    setActiveAgent(null);
+    setMessages([]);
+    setActiveAgentName("New chat");
+    setView("idea");
+    setSidebarOpen(false);
+    setIsSending(false);
+    setCurrentRunId(null);
+    setRunStatus(null);
   };
 
   const openAgent = async (agent: AgentSummary) => {
@@ -136,8 +174,11 @@ export function App() {
       return;
     }
 
-    abortRef.current?.abort();
-    setActiveAgentId(agent.id);
+    invalidateActiveStream();
+    const selectionSession = setActiveAgent(agent.id);
+    const isCurrentSelection = () =>
+      selectionSessionRef.current === selectionSession &&
+      activeAgentIdRef.current === agent.id;
     setActiveAgentName(agent.name);
     setMessages([]);
     setView("chat");
@@ -149,9 +190,15 @@ export function App() {
 
     try {
       const detail = await getAgent(apiKey, agent.id);
+      if (!isCurrentSelection()) {
+        return;
+      }
       setActiveAgentName(detail.name);
 
       const runs = await listAgentRuns(apiKey, agent.id);
+      if (!isCurrentSelection()) {
+        return;
+      }
       setMessages(
         runsToChatMessages(runs).map((m) => ({ ...m, streaming: false }))
       );
@@ -171,9 +218,13 @@ export function App() {
         void consumeStream(agent.id, activeRun.id);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isCurrentSelection()) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
-      setLoadingHistory(false);
+      if (isCurrentSelection()) {
+        setLoadingHistory(false);
+      }
     }
   };
 
@@ -181,42 +232,71 @@ export function App() {
     if (!apiKey) {
       return;
     }
+    if (activeAgentIdRef.current !== agentId) {
+      return;
+    }
 
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    const streamSession = streamSessionRef.current + 1;
+    streamSessionRef.current = streamSession;
 
-    let assistantId: string | null = null;
+    const isCurrentStream = () =>
+      streamSessionRef.current === streamSession &&
+      !controller.signal.aborted &&
+      activeAgentIdRef.current === agentId;
+
+    const assistantId = `assistant-${runId}`;
 
     const appendAssistant = (delta: string) => {
       setMessages((prev) => {
-        if (assistantId) {
-          return prev.map((m) =>
-            m.id === assistantId ? { ...m, text: m.text + delta } : m
-          );
+        if (!isCurrentStream()) {
+          return prev;
         }
-        const id = crypto.randomUUID();
-        assistantId = id;
+        let found = false;
+        const next = prev.map((m) => {
+          if (m.id !== assistantId) {
+            return m;
+          }
+          found = true;
+          return { ...m, text: m.text + delta, streaming: true };
+        });
+        if (found) {
+          return next;
+        }
         return [
           ...prev,
-          { id, role: "assistant", text: delta, streaming: true },
+          { id: assistantId, role: "assistant", text: delta, streaming: true },
         ];
       });
     };
 
     const finalize = (text?: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
+      setMessages((prev) => {
+        if (!isCurrentStream()) {
+          return prev;
+        }
+        let found = false;
+        const next = prev.map((m) => {
           if (m.id !== assistantId) {
             return m;
           }
+          found = true;
           return {
             ...m,
             text: text && text.length > 0 ? text : m.text,
             streaming: false,
           };
-        })
-      );
+        });
+        if (found || !text) {
+          return next;
+        }
+        return [
+          ...prev,
+          { id: assistantId, role: "assistant", text, streaming: false },
+        ];
+      });
     };
 
     try {
@@ -225,6 +305,9 @@ export function App() {
         agentId,
         runId,
         (event) => {
+          if (!isCurrentStream()) {
+            return;
+          }
           switch (event.type) {
             case "status":
               setRunStatus(event.status);
@@ -249,7 +332,13 @@ export function App() {
         controller.signal
       );
 
+      if (!isCurrentStream()) {
+        return;
+      }
       const run = await getRun(apiKey, agentId, runId);
+      if (!isCurrentStream()) {
+        return;
+      }
       setRunStatus(run.status);
       if (run.result) {
         finalize(run.result);
@@ -260,10 +349,16 @@ export function App() {
       if (controller.signal.aborted) {
         return;
       }
+      if (!isCurrentStream()) {
+        return;
+      }
       const message = e instanceof Error ? e.message : String(e);
       if (message.includes("expired") && apiKey) {
         try {
           const run = await getRun(apiKey, agentId, runId);
+          if (!isCurrentStream()) {
+            return;
+          }
           finalize(run.result);
           setRunStatus(run.status);
         } catch {
@@ -282,6 +377,7 @@ export function App() {
     }
 
     const prompt = text.trim();
+    const selectionSession = selectionSessionRef.current;
     setMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "user", text: prompt },
@@ -294,17 +390,30 @@ export function App() {
     try {
       if (options.newAgent) {
         const response = await createAgent(apiKey, prompt, settings);
-        setActiveAgentId(response.agent.id);
+        if (selectionSessionRef.current !== selectionSession) {
+          return;
+        }
+        setActiveAgent(response.agent.id);
         setActiveAgentName(response.agent.name);
         setCurrentRunId(response.run.id);
         await refreshAgents();
         await consumeStream(response.agent.id, response.run.id);
       } else if (activeAgentId) {
-        const run = await createRun(apiKey, activeAgentId, prompt);
+        const agentId = activeAgentId;
+        const run = await createRun(apiKey, agentId, prompt);
+        if (
+          selectionSessionRef.current !== selectionSession ||
+          activeAgentIdRef.current !== agentId
+        ) {
+          return;
+        }
         setCurrentRunId(run.id);
-        await consumeStream(activeAgentId, run.id);
+        await consumeStream(agentId, run.id);
       }
     } catch (e) {
+      if (selectionSessionRef.current !== selectionSession) {
+        return;
+      }
       setError(e instanceof Error ? e.message : String(e));
       setIsSending(false);
     }
@@ -434,10 +543,7 @@ export function App() {
             void openAgent(agent);
           }}
           onNew={() => {
-            setActiveAgentId(null);
-            setMessages([]);
-            setView("idea");
-            setSidebarOpen(false);
+            startNewIdeaView();
           }}
           onSettings={() => {
             setView("settings");
@@ -510,10 +616,7 @@ export function App() {
           void openAgent(agent);
         }}
         onNew={() => {
-          setActiveAgentId(null);
-          setMessages([]);
-          setView("idea");
-          setSidebarOpen(false);
+          startNewIdeaView();
         }}
         onSettings={() => {
           setView("settings");
@@ -546,7 +649,7 @@ export function App() {
             )}
             </div>
           </div>
-          <button type="button" className="btn btn-ghost" onClick={() => setView("idea")}>
+          <button type="button" className="btn btn-ghost" onClick={startNewIdeaView}>
             New idea
           </button>
         </header>

@@ -35,6 +35,7 @@ cd cursor-pocket
 chmod +x scripts/setup-cloudflare.sh
 
 export CLOUDFLARE_API_TOKEN="..."   # Pages Edit + Access Edit
+export CLOUDFLARE_ACCOUNT_ID="..."  # required if your token sees multiple accounts
 export POCKET_ALLOWED_EMAIL="you@example.com"
 
 ./scripts/setup-cloudflare.sh
@@ -43,9 +44,9 @@ export POCKET_ALLOWED_EMAIL="you@example.com"
 The script uses Cloudflare APIs to:
 
 1. Verify your token  
-2. Detect account ID  
+2. Detect account ID, or stop if your token can access multiple accounts  
 3. Create (or update) an **Access application** on `cursor-pocket.pages.dev`  
-4. Add an **Allow** policy for your email  
+4. Add and verify an **Allow** policy for your email only  
 5. Print `gh secret set` commands for GitHub Actions deploy  
 
 Then paste secrets and run **Deploy to Cloudflare Pages** workflow.
@@ -68,7 +69,7 @@ Then paste secrets and run **Deploy to Cloudflare Pages** workflow.
 
 1. [Cloudflare dashboard](https://dash.cloudflare.com/) → **My Profile → API Tokens**
 2. **Create Token** → template **Edit Cloudflare Workers** (includes Pages)
-3. Permissions: **Account → Cloudflare Pages → Edit**
+3. Permissions: **Account → Cloudflare Pages → Edit** and **Zero Trust → Access: Apps and Policies → Edit**
 4. Copy the token
 
 ### 2. GitHub secrets

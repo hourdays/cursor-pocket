@@ -186,16 +186,24 @@ export function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    let assistantId: string | null = null;
+    let assistantId: string | null = `assistant-${runId}`;
 
     const appendAssistant = (delta: string) => {
       setMessages((prev) => {
         if (assistantId) {
-          return prev.map((m) =>
-            m.id === assistantId ? { ...m, text: m.text + delta } : m
-          );
+          let found = false;
+          const next = prev.map((m) => {
+            if (m.id !== assistantId) {
+              return m;
+            }
+            found = true;
+            return { ...m, text: m.text + delta, streaming: true };
+          });
+          if (found) {
+            return next;
+          }
         }
-        const id = crypto.randomUUID();
+        const id = assistantId ?? `assistant-${runId}`;
         assistantId = id;
         return [
           ...prev,
@@ -205,18 +213,31 @@ export function App() {
     };
 
     const finalize = (text?: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) {
-            return m;
+      setMessages((prev) => {
+        if (assistantId) {
+          let found = false;
+          const next = prev.map((m) => {
+            if (m.id !== assistantId) {
+              return m;
+            }
+            found = true;
+            return {
+              ...m,
+              text: text && text.length > 0 ? text : m.text,
+              streaming: false,
+            };
+          });
+          if (found) {
+            return next;
           }
-          return {
-            ...m,
-            text: text && text.length > 0 ? text : m.text,
-            streaming: false,
-          };
-        })
-      );
+        }
+        if (!text || text.length === 0) {
+          return prev;
+        }
+        const id = assistantId ?? `assistant-${runId}`;
+        assistantId = id;
+        return [...prev, { id, role: "assistant", text, streaming: false }];
+      });
     };
 
     try {

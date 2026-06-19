@@ -17,6 +17,7 @@ import {
 import {
   allowedEmailHint,
   assertEmailAllowed,
+  isAccessDeniedError,
   isAccessControlEnabled,
 } from "./access";
 import { MarkdownContent } from "./MarkdownContent";
@@ -80,10 +81,12 @@ export function App() {
       setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
     } catch (e) {
       setAccountLabel(null);
-      if (e instanceof Error && isAccessControlEnabled()) {
+      if (isAccessDeniedError(e)) {
         clearAPIKey();
         setApiKey(null);
         setView("connect");
+        setError(e.message);
+      } else if (e instanceof Error && isAccessControlEnabled()) {
         setError(e.message);
       }
     }
@@ -152,10 +155,6 @@ export function App() {
       setActiveAgentName(detail.name);
 
       const runs = await listAgentRuns(apiKey, agent.id);
-      setMessages(
-        runsToChatMessages(runs).map((m) => ({ ...m, streaming: false }))
-      );
-
       const activeRun =
         [...runs]
           .reverse()
@@ -163,12 +162,23 @@ export function App() {
         (detail.latestRunId
           ? runs.find((run) => run.id === detail.latestRunId)
           : undefined);
+      const activeAssistantId =
+        activeRun && isActiveRunStatus(activeRun.status)
+          ? `assistant-${activeRun.id}`
+          : null;
+
+      setMessages(
+        runsToChatMessages(runs).map((m) => ({
+          ...m,
+          streaming: m.id === activeAssistantId,
+        }))
+      );
 
       if (activeRun && isActiveRunStatus(activeRun.status)) {
         setIsSending(true);
         setCurrentRunId(activeRun.id);
         setRunStatus(activeRun.status);
-        void consumeStream(agent.id, activeRun.id);
+        void consumeStream(agent.id, activeRun.id, activeAssistantId);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -177,7 +187,11 @@ export function App() {
     }
   };
 
-  const consumeStream = async (agentId: string, runId: string) => {
+  const consumeStream = async (
+    agentId: string,
+    runId: string,
+    existingAssistantId?: string | null
+  ) => {
     if (!apiKey) {
       return;
     }
@@ -186,17 +200,27 @@ export function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    let assistantId: string | null = null;
+    let assistantId: string | null = existingAssistantId ?? null;
+
+    const ensureAssistantId = () => {
+      assistantId ??= crypto.randomUUID();
+      return assistantId;
+    };
 
     const appendAssistant = (delta: string) => {
+      const id = ensureAssistantId();
       setMessages((prev) => {
-        if (assistantId) {
-          return prev.map((m) =>
-            m.id === assistantId ? { ...m, text: m.text + delta } : m
-          );
+        let found = false;
+        const updated = prev.map((m) => {
+          if (m.id !== id) {
+            return m;
+          }
+          found = true;
+          return { ...m, text: m.text + delta, streaming: true };
+        });
+        if (found) {
+          return updated;
         }
-        const id = crypto.randomUUID();
-        assistantId = id;
         return [
           ...prev,
           { id, role: "assistant", text: delta, streaming: true },
@@ -205,18 +229,30 @@ export function App() {
     };
 
     const finalize = (text?: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantId) {
+      if (!assistantId && (!text || text.length === 0)) {
+        return;
+      }
+      const id = ensureAssistantId();
+      setMessages((prev) => {
+        let found = false;
+        const updated = prev.map((m) => {
+          if (m.id !== id) {
             return m;
           }
+          found = true;
           return {
             ...m,
             text: text && text.length > 0 ? text : m.text,
             streaming: false,
           };
-        })
-      );
+        });
+        if (found) {
+          return updated;
+        }
+        return text && text.length > 0
+          ? [...prev, { id, role: "assistant", text, streaming: false }]
+          : prev;
+      });
     };
 
     try {

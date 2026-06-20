@@ -132,7 +132,7 @@ else
   policies="$(cf GET "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies?per_page=50")"
   require_success "$policies" "Failed to list Access policies"
   mapfile -t POLICY_IDS < <(echo "$policies" | POLICY_NAME="$POLICY_NAME" python3 -c "
-import json, os
+import json, os, sys
 policy_name = os.environ['POLICY_NAME']
 d = json.load(sys.stdin)
 for policy in d.get('result') or []:

@@ -17,6 +17,7 @@ import {
 import {
   allowedEmailHint,
   assertEmailAllowed,
+  isAccessControlError,
   isAccessControlEnabled,
 } from "./access";
 import { MarkdownContent } from "./MarkdownContent";
@@ -80,10 +81,12 @@ export function App() {
       setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
     } catch (e) {
       setAccountLabel(null);
-      if (e instanceof Error && isAccessControlEnabled()) {
+      if (isAccessControlError(e) && isAccessControlEnabled()) {
         clearAPIKey();
         setApiKey(null);
         setView("connect");
+        setError(e.message);
+      } else if (e instanceof Error) {
         setError(e.message);
       }
     }

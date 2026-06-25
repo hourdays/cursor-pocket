@@ -15,6 +15,7 @@ import {
   validateAPIKey,
 } from "@shared/api/cloudAgentsClient";
 import {
+  AccessDeniedError,
   allowedEmailHint,
   assertEmailAllowed,
   isAccessControlEnabled,
@@ -29,6 +30,7 @@ import {
 } from "./storage";
 
 type View = "connect" | "idea" | "chat" | "settings";
+type AccountValidation = "idle" | "checking" | "verified" | "failed";
 
 interface ChatMessage {
   id: string;
@@ -42,6 +44,10 @@ export function App() {
   const [accountLabel, setAccountLabel] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [view, setView] = useState<View>(apiKey ? "idea" : "connect");
+  const [accountValidation, setAccountValidation] =
+    useState<AccountValidation>(() =>
+      apiKey && isAccessControlEnabled() ? "checking" : "verified"
+    );
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [activeAgentName, setActiveAgentName] = useState("New chat");
@@ -57,42 +63,63 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const canUseAPI =
+    Boolean(apiKey) &&
+    (!isAccessControlEnabled() || accountValidation === "verified");
 
-  const refreshAgents = useCallback(async () => {
-    if (!apiKey) {
+  const refreshAgents = useCallback(async (key = apiKey) => {
+    if (!key) {
       return;
     }
     try {
-      const items = await listAgents(apiKey);
+      const items = await listAgents(key);
       setAgents(items);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [apiKey]);
 
-  const refreshAccount = useCallback(async () => {
-    if (!apiKey) {
-      return;
+  const refreshAccount = useCallback(async (key = apiKey): Promise<boolean> => {
+    if (!key) {
+      setAccountValidation("idle");
+      return false;
     }
+    setAccountValidation("checking");
     try {
-      const info = await validateAPIKey(apiKey);
+      const info = await validateAPIKey(key);
       assertEmailAllowed(info.userEmail);
       setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
+      setAccountValidation("verified");
+      return true;
     } catch (e) {
       setAccountLabel(null);
-      if (e instanceof Error && isAccessControlEnabled()) {
-        clearAPIKey();
-        setApiKey(null);
-        setView("connect");
-        setError(e.message);
+      if (isAccessControlEnabled()) {
+        const message = e instanceof Error ? e.message : String(e);
+        setError(message);
+        if (e instanceof AccessDeniedError) {
+          clearAPIKey();
+          setApiKey(null);
+          setAccountValidation("idle");
+          setView("connect");
+        } else {
+          setAccountValidation("failed");
+        }
       }
+      return false;
     }
   }, [apiKey]);
 
   useEffect(() => {
     if (apiKey) {
-      void refreshAccount();
-      void refreshAgents();
+      const key = apiKey;
+      void (async () => {
+        const verified = await refreshAccount(key);
+        if (verified || !isAccessControlEnabled()) {
+          await refreshAgents(key);
+        }
+      })();
+    } else {
+      setAccountValidation("idle");
     }
   }, [apiKey, refreshAccount, refreshAgents]);
 
@@ -110,11 +137,12 @@ export function App() {
       const info = await validateAPIKey(trimmed);
       assertEmailAllowed(info.userEmail);
       saveAPIKey(trimmed);
+      setAccountValidation("verified");
       setApiKey(trimmed);
       setView("idea");
       setKeyDraft("");
       setAccountLabel(info.userEmail ?? info.apiKeyName ?? "Connected");
-      await refreshAgents();
+      await refreshAgents(trimmed);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -125,6 +153,7 @@ export function App() {
     clearAPIKey();
     setApiKey(null);
     setAccountLabel(null);
+    setAccountValidation("idle");
     setAgents([]);
     setMessages([]);
     setActiveAgentId(null);
@@ -132,7 +161,7 @@ export function App() {
   };
 
   const openAgent = async (agent: AgentSummary) => {
-    if (!apiKey) {
+    if (!apiKey || !canUseAPI) {
       return;
     }
 
@@ -178,7 +207,7 @@ export function App() {
   };
 
   const consumeStream = async (agentId: string, runId: string) => {
-    if (!apiKey) {
+    if (!apiKey || !canUseAPI) {
       return;
     }
 
@@ -277,7 +306,7 @@ export function App() {
   };
 
   const sendPrompt = async (text: string, options: { newAgent: boolean }) => {
-    if (!apiKey || !text.trim() || isSending) {
+    if (!apiKey || !canUseAPI || !text.trim() || isSending) {
       return;
     }
 
@@ -320,6 +349,43 @@ export function App() {
     setSettings(next);
     saveSettings(next);
   };
+
+  const retryAccountValidation = async () => {
+    setError(null);
+    if (!apiKey) {
+      return;
+    }
+    const verified = await refreshAccount(apiKey);
+    if (verified) {
+      await refreshAgents(apiKey);
+    }
+  };
+
+  if (apiKey && isAccessControlEnabled() && accountValidation !== "verified") {
+    return (
+      <div className="connect-card">
+        <h1>Cursor Pocket</h1>
+        <p className="muted">
+          {accountValidation === "failed"
+            ? "Could not verify this API key against the private site allowlist."
+            : "Checking whether this API key can access this private Pocket site…"}
+        </p>
+        {error && <p className="error-banner">{error}</p>}
+        {accountValidation === "failed" && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void retryAccountValidation()}
+          >
+            Retry verification
+          </button>
+        )}
+        <button type="button" className="btn" onClick={signOut}>
+          Sign out
+        </button>
+      </div>
+    );
+  }
 
   if (!apiKey || view === "connect") {
     return (
@@ -479,7 +545,7 @@ export function App() {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={!ideaDraft.trim() || isSending}
+              disabled={!ideaDraft.trim() || isSending || !canUseAPI}
               onClick={startFromIdea}
             >
               {isSending ? "Starting agent…" : "Start agent"}
@@ -609,7 +675,7 @@ export function App() {
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={!isSending && !draft.trim()}
+              disabled={!isSending && (!draft.trim() || !canUseAPI)}
             >
               {isSending ? "Stop" : "Send"}
             </button>

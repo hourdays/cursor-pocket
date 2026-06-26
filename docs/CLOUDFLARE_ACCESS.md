@@ -46,7 +46,10 @@ The script uses Cloudflare APIs to:
 2. Detect account ID  
 3. Create (or update) an **Access application** on `cursor-pocket.pages.dev`  
 4. Add an **Allow** policy for your email  
-5. Print `gh secret set` commands for GitHub Actions deploy  
+5. Verify the app has no broader Allow/Bypass policies  
+6. Print `gh secret set` commands for GitHub Actions deploy  
+
+If an existing Access app already has a broader grant policy, the script stops instead of printing success. Remove the broader policy in Zero Trust, then rerun the script.
 
 Then paste secrets and run **Deploy to Cloudflare Pages** workflow.
 

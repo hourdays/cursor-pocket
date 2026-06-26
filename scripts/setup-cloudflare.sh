@@ -68,7 +68,7 @@ ACCOUNT_PATH="/accounts/${CLOUDFLARE_ACCOUNT_ID}"
 
 echo "==> Looking for existing Access app on ${DOMAIN}…"
 apps="$(cf GET "${ACCOUNT_PATH}/access/apps?per_page=50")"
-APP_ID="$(echo "$apps" | python3 -c "
+APP_ID="$(echo "$apps" | DOMAIN="$DOMAIN" python3 -c "
 import sys, json, os
 domain = os.environ['DOMAIN']
 d = json.load(sys.stdin)
@@ -76,11 +76,11 @@ for app in d.get('result') or []:
     if app.get('domain') == domain:
         print(app['id'])
         break
-" DOMAIN="$DOMAIN")"
+")"
 
 if [[ -z "${APP_ID}" ]]; then
   echo "==> Creating Access application…"
-  create_body="$(python3 -c "
+  create_body="$(APP_NAME="$APP_NAME" DOMAIN="$DOMAIN" EMAIL="$POCKET_ALLOWED_EMAIL" python3 -c "
 import json, os
 print(json.dumps({
   'name': os.environ['APP_NAME'],
@@ -95,7 +95,7 @@ print(json.dumps({
     'include': [{'email': {'email': os.environ['EMAIL']}}]
   }]
 }))
-" APP_NAME="$APP_NAME" DOMAIN="$DOMAIN" EMAIL="$POCKET_ALLOWED_EMAIL")"
+")"
   created="$(cf POST "${ACCOUNT_PATH}/access/apps" "$create_body")"
   if ! echo "$created" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"; then
     echo "ERROR: Failed to create Access app"
@@ -107,7 +107,7 @@ print(json.dumps({
 else
   echo "    Found app ${APP_ID}"
   echo "==> Ensuring allow policy for ${POCKET_ALLOWED_EMAIL}…"
-  policy_body="$(python3 -c "
+  policy_body="$(EMAIL="$POCKET_ALLOWED_EMAIL" python3 -c "
 import json, os
 print(json.dumps({
   'name': 'Only allowed email',
@@ -115,15 +115,63 @@ print(json.dumps({
   'precedence': 1,
   'include': [{'email': {'email': os.environ['EMAIL']}}]
 }))
-" EMAIL="$POCKET_ALLOWED_EMAIL")"
+")"
   policy_result="$(cf POST "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies" "$policy_body")"
   if ! echo "$policy_result" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"; then
-    echo "WARN: Policy create may have failed (app may already have a policy). Check Zero Trust dashboard."
+    echo "WARN: Policy create may have failed (app may already have a policy). Verifying current policies."
     echo "$policy_result" | python3 -m json.tool 2>/dev/null || echo "$policy_result"
   else
     echo "    Policy added"
   fi
 fi
+
+echo "==> Verifying Access policies are email-locked…"
+policies="$(cf GET "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies")"
+if ! echo "$policies" | EMAIL="$POCKET_ALLOWED_EMAIL" python3 -c "
+import json
+import os
+import sys
+
+email = os.environ['EMAIL'].lower()
+d = json.load(sys.stdin)
+if not d.get('success'):
+    print('Cloudflare API did not return policies successfully.', file=sys.stderr)
+    raise SystemExit(1)
+
+unsafe = []
+exact_email_policy = False
+granting_decisions = {'allow', 'bypass', 'non_identity'}
+
+for policy in d.get('result') or []:
+    decision = policy.get('decision')
+    if decision not in granting_decisions:
+        continue
+
+    includes = policy.get('include') or []
+    is_exact_email = (
+        decision == 'allow'
+        and len(includes) == 1
+        and (includes[0].get('email') or {}).get('email', '').lower() == email
+    )
+    if is_exact_email:
+        exact_email_policy = True
+    else:
+        unsafe.append(policy.get('name') or policy.get('id') or '<unnamed policy>')
+
+if unsafe:
+    print('Unsafe Access grant policies found: ' + ', '.join(unsafe), file=sys.stderr)
+    raise SystemExit(1)
+
+if not exact_email_policy:
+    print('No exact allow policy found for ' + email, file=sys.stderr)
+    raise SystemExit(1)
+"; then
+  echo "ERROR: Access is not exclusively locked to ${POCKET_ALLOWED_EMAIL}."
+  echo "       Remove broader Allow/Bypass policies for ${DOMAIN}, then rerun this script."
+  echo "$policies" | python3 -m json.tool 2>/dev/null || echo "$policies"
+  exit 1
+fi
+echo "    Access policies verified"
 
 echo ""
 echo "=============================================="

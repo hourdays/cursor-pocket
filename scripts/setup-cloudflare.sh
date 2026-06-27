@@ -68,7 +68,7 @@ ACCOUNT_PATH="/accounts/${CLOUDFLARE_ACCOUNT_ID}"
 
 echo "==> Looking for existing Access app on ${DOMAIN}…"
 apps="$(cf GET "${ACCOUNT_PATH}/access/apps?per_page=50")"
-APP_ID="$(echo "$apps" | python3 -c "
+APP_ID="$(echo "$apps" | DOMAIN="$DOMAIN" python3 -c "
 import sys, json, os
 domain = os.environ['DOMAIN']
 d = json.load(sys.stdin)
@@ -76,11 +76,11 @@ for app in d.get('result') or []:
     if app.get('domain') == domain:
         print(app['id'])
         break
-" DOMAIN="$DOMAIN")"
+")"
 
 if [[ -z "${APP_ID}" ]]; then
   echo "==> Creating Access application…"
-  create_body="$(python3 -c "
+  create_body="$(APP_NAME="$APP_NAME" DOMAIN="$DOMAIN" EMAIL="$POCKET_ALLOWED_EMAIL" python3 -c "
 import json, os
 print(json.dumps({
   'name': os.environ['APP_NAME'],
@@ -95,7 +95,7 @@ print(json.dumps({
     'include': [{'email': {'email': os.environ['EMAIL']}}]
   }]
 }))
-" APP_NAME="$APP_NAME" DOMAIN="$DOMAIN" EMAIL="$POCKET_ALLOWED_EMAIL")"
+")"
   created="$(cf POST "${ACCOUNT_PATH}/access/apps" "$create_body")"
   if ! echo "$created" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"; then
     echo "ERROR: Failed to create Access app"
@@ -107,7 +107,7 @@ print(json.dumps({
 else
   echo "    Found app ${APP_ID}"
   echo "==> Ensuring allow policy for ${POCKET_ALLOWED_EMAIL}…"
-  policy_body="$(python3 -c "
+  policy_body="$(EMAIL="$POCKET_ALLOWED_EMAIL" python3 -c "
 import json, os
 print(json.dumps({
   'name': 'Only allowed email',
@@ -115,7 +115,7 @@ print(json.dumps({
   'precedence': 1,
   'include': [{'email': {'email': os.environ['EMAIL']}}]
 }))
-" EMAIL="$POCKET_ALLOWED_EMAIL")"
+")"
   policy_result="$(cf POST "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies" "$policy_body")"
   if ! echo "$policy_result" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"; then
     echo "WARN: Policy create may have failed (app may already have a policy). Check Zero Trust dashboard."

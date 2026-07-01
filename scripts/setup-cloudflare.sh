@@ -14,6 +14,7 @@ API="https://api.cloudflare.com/client/v4"
 DOMAIN="${POCKET_DOMAIN:-cursor-pocket.pages.dev}"
 APP_NAME="${POCKET_APP_NAME:-Cursor Pocket}"
 REPO="${GITHUB_REPO:-hourdays/cursor-pocket}"
+POLICY_NAME="${POCKET_POLICY_NAME:-Only allowed email}"
 
 if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
   echo "ERROR: Set CLOUDFLARE_API_TOKEN (Account → Cloudflare Pages → Edit + Zero Trust → Edit)"
@@ -41,19 +42,38 @@ cf() {
   fi
 }
 
+require_success() {
+  local label="$1"
+  local response="$2"
+  if ! printf '%s' "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)" 2>/dev/null; then
+    echo "ERROR: ${label}"
+    printf '%s' "$response" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$response"
+    exit 1
+  fi
+}
+
+policy_body() {
+  POLICY_NAME="$POLICY_NAME" EMAIL="$POCKET_ALLOWED_EMAIL" python3 -c "
+import json, os
+print(json.dumps({
+  'name': os.environ['POLICY_NAME'],
+  'decision': 'allow',
+  'precedence': 1,
+  'include': [{'email': {'email': os.environ['EMAIL']}}]
+}))
+"
+}
+
 echo "==> Verifying Cloudflare API token…"
 verify="$(cf GET "/user/tokens/verify")"
-if ! echo "$verify" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)" 2>/dev/null; then
-  echo "ERROR: Invalid CLOUDFLARE_API_TOKEN"
-  echo "$verify"
-  exit 1
-fi
+require_success "Invalid CLOUDFLARE_API_TOKEN" "$verify"
 echo "    Token OK"
 
 if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
   echo "==> Detecting account ID…"
   accounts="$(cf GET "/accounts?per_page=5")"
-  CLOUDFLARE_ACCOUNT_ID="$(echo "$accounts" | python3 -c "
+  require_success "Failed to list Cloudflare accounts" "$accounts"
+  CLOUDFLARE_ACCOUNT_ID="$(printf '%s' "$accounts" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 items = d.get('result') or []
@@ -68,7 +88,8 @@ ACCOUNT_PATH="/accounts/${CLOUDFLARE_ACCOUNT_ID}"
 
 echo "==> Looking for existing Access app on ${DOMAIN}…"
 apps="$(cf GET "${ACCOUNT_PATH}/access/apps?per_page=50")"
-APP_ID="$(echo "$apps" | python3 -c "
+require_success "Failed to list Access applications" "$apps"
+APP_ID="$(printf '%s' "$apps" | DOMAIN="$DOMAIN" python3 -c "
 import sys, json, os
 domain = os.environ['DOMAIN']
 d = json.load(sys.stdin)
@@ -76,11 +97,11 @@ for app in d.get('result') or []:
     if app.get('domain') == domain:
         print(app['id'])
         break
-" DOMAIN="$DOMAIN")"
+")"
 
 if [[ -z "${APP_ID}" ]]; then
   echo "==> Creating Access application…"
-  create_body="$(python3 -c "
+  create_body="$(APP_NAME="$APP_NAME" DOMAIN="$DOMAIN" EMAIL="$POCKET_ALLOWED_EMAIL" POLICY_NAME="$POLICY_NAME" python3 -c "
 import json, os
 print(json.dumps({
   'name': os.environ['APP_NAME'],
@@ -89,39 +110,60 @@ print(json.dumps({
   'session_duration': '24h',
   'auto_redirect_to_identity': True,
   'policies': [{
-    'name': 'Only allowed email',
+    'name': os.environ['POLICY_NAME'],
     'decision': 'allow',
     'precedence': 1,
     'include': [{'email': {'email': os.environ['EMAIL']}}]
   }]
 }))
-" APP_NAME="$APP_NAME" DOMAIN="$DOMAIN" EMAIL="$POCKET_ALLOWED_EMAIL")"
+")"
   created="$(cf POST "${ACCOUNT_PATH}/access/apps" "$create_body")"
-  if ! echo "$created" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"; then
-    echo "ERROR: Failed to create Access app"
-    echo "$created" | python3 -m json.tool 2>/dev/null || echo "$created"
-    exit 1
-  fi
-  APP_ID="$(echo "$created" | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['id'])")"
+  require_success "Failed to create Access app" "$created"
+  APP_ID="$(printf '%s' "$created" | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['id'])")"
   echo "    Created app ${APP_ID}"
 else
   echo "    Found app ${APP_ID}"
-  echo "==> Ensuring allow policy for ${POCKET_ALLOWED_EMAIL}…"
-  policy_body="$(python3 -c "
-import json, os
-print(json.dumps({
-  'name': 'Only allowed email',
-  'decision': 'allow',
-  'precedence': 1,
-  'include': [{'email': {'email': os.environ['EMAIL']}}]
-}))
-" EMAIL="$POCKET_ALLOWED_EMAIL")"
-  policy_result="$(cf POST "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies" "$policy_body")"
-  if ! echo "$policy_result" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"; then
-    echo "WARN: Policy create may have failed (app may already have a policy). Check Zero Trust dashboard."
-    echo "$policy_result" | python3 -m json.tool 2>/dev/null || echo "$policy_result"
+  echo "==> Replacing Access policies with allow policy for ${POCKET_ALLOWED_EMAIL}…"
+  policies="$(cf GET "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies?per_page=50")"
+  require_success "Failed to list Access policies" "$policies"
+  MANAGED_POLICY_ID="$(printf '%s' "$policies" | POLICY_NAME="$POLICY_NAME" python3 -c "
+import sys, json, os
+name = os.environ['POLICY_NAME']
+d = json.load(sys.stdin)
+for policy in d.get('result') or []:
+    if policy.get('name') == name:
+        print(policy['id'])
+        break
+")"
+  policy_json="$(policy_body)"
+  if [[ -n "${MANAGED_POLICY_ID}" ]]; then
+    policy_result="$(cf PUT "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies/${MANAGED_POLICY_ID}" "$policy_json")"
+    require_success "Failed to update Access policy" "$policy_result"
+    echo "    Policy updated"
   else
+    policy_result="$(cf POST "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies" "$policy_json")"
+    require_success "Failed to create Access policy" "$policy_result"
+    MANAGED_POLICY_ID="$(printf '%s' "$policy_result" | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['id'])")"
     echo "    Policy added"
+  fi
+
+  stale_policy_ids="$(printf '%s' "$policies" | MANAGED_POLICY_ID="$MANAGED_POLICY_ID" python3 -c "
+import sys, json, os
+managed = os.environ['MANAGED_POLICY_ID']
+d = json.load(sys.stdin)
+for policy in d.get('result') or []:
+    policy_id = policy.get('id')
+    if policy_id and policy_id != managed:
+        print(policy_id)
+")"
+  if [[ -n "${stale_policy_ids}" ]]; then
+    echo "==> Removing stale Access policies…"
+    while IFS= read -r policy_id; do
+      [[ -z "${policy_id}" ]] && continue
+      delete_result="$(cf DELETE "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies/${policy_id}")"
+      require_success "Failed to delete stale Access policy ${policy_id}" "$delete_result"
+      echo "    Removed policy ${policy_id}"
+    done <<< "${stale_policy_ids}"
   fi
 fi
 

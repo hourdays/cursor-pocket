@@ -45,7 +45,7 @@ The script uses Cloudflare APIs to:
 1. Verify your token  
 2. Detect account ID  
 3. Create (or update) an **Access application** on `cursor-pocket.pages.dev`  
-4. Add an **Allow** policy for your email  
+4. Replace stale Access policies with a single **Allow** policy for your email
 5. Print `gh secret set` commands for GitHub Actions deploy  
 
 Then paste secrets and run **Deploy to Cloudflare Pages** workflow.
@@ -68,7 +68,7 @@ Then paste secrets and run **Deploy to Cloudflare Pages** workflow.
 
 1. [Cloudflare dashboard](https://dash.cloudflare.com/) → **My Profile → API Tokens**
 2. **Create Token** → template **Edit Cloudflare Workers** (includes Pages)
-3. Permissions: **Account → Cloudflare Pages → Edit**
+3. Permissions: **Account → Cloudflare Pages → Edit** and **Zero Trust → Access: Apps and Policies → Edit**
 4. Copy the token
 
 ### 2. GitHub secrets

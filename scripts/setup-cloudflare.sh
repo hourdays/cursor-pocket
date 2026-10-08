@@ -25,6 +25,21 @@ if [[ -z "${POCKET_ALLOWED_EMAIL:-}" ]]; then
   exit 1
 fi
 
+json_success() {
+  python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"
+}
+
+print_json() {
+  python3 -c "
+import json, sys
+raw = sys.stdin.read()
+try:
+    print(json.dumps(json.loads(raw), indent=4))
+except Exception:
+    print(raw, end='')
+"
+}
+
 cf() {
   local method="$1"
   local path="$2"
@@ -43,7 +58,7 @@ cf() {
 
 echo "==> Verifying Cloudflare API token…"
 verify="$(cf GET "/user/tokens/verify")"
-if ! echo "$verify" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)" 2>/dev/null; then
+if ! json_success <<<"$verify" 2>/dev/null; then
   echo "ERROR: Invalid CLOUDFLARE_API_TOKEN"
   echo "$verify"
   exit 1
@@ -68,7 +83,7 @@ ACCOUNT_PATH="/accounts/${CLOUDFLARE_ACCOUNT_ID}"
 
 echo "==> Looking for existing Access app on ${DOMAIN}…"
 apps="$(cf GET "${ACCOUNT_PATH}/access/apps?per_page=50")"
-APP_ID="$(echo "$apps" | python3 -c "
+APP_ID="$(DOMAIN="$DOMAIN" python3 -c "
 import sys, json, os
 domain = os.environ['DOMAIN']
 d = json.load(sys.stdin)
@@ -76,11 +91,84 @@ for app in d.get('result') or []:
     if app.get('domain') == domain:
         print(app['id'])
         break
-" DOMAIN="$DOMAIN")"
+" <<<"$apps")"
+
+policy_body="$(EMAIL="$POCKET_ALLOWED_EMAIL" python3 -c "
+import json, os
+print(json.dumps({
+  'name': 'Only allowed email',
+  'decision': 'allow',
+  'precedence': 1,
+  'include': [{'email': {'email': os.environ['EMAIL']}}]
+}))
+")"
+
+ensure_policy() {
+  echo "==> Ensuring only ${POCKET_ALLOWED_EMAIL} can access ${DOMAIN}…"
+  local policies policy_id policy_result stale_ids stale_id delete_result
+  policies="$(cf GET "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies?per_page=50")"
+  if ! json_success <<<"$policies"; then
+    echo "ERROR: Failed to list existing Access policies"
+    echo "$policies" | print_json
+    exit 1
+  fi
+
+  policy_id="$(POLICY_NAME="Only allowed email" python3 -c "
+import sys, json, os
+name = os.environ['POLICY_NAME']
+d = json.load(sys.stdin)
+for policy in d.get('result') or []:
+    if policy.get('name') == name:
+        print(policy['id'])
+        break
+" <<<"$policies")"
+
+  if [[ -n "$policy_id" ]]; then
+    policy_result="$(cf PUT "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies/${policy_id}" "$policy_body")"
+  else
+    policy_result="$(cf POST "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies" "$policy_body")"
+  fi
+
+  if ! json_success <<<"$policy_result"; then
+    echo "ERROR: Failed to apply email allow policy"
+    echo "$policy_result" | print_json
+    exit 1
+  fi
+
+  if [[ -z "$policy_id" ]]; then
+    policy_id="$(python3 -c "import sys,json; print(json.load(sys.stdin)['result']['id'])" <<<"$policy_result")"
+  fi
+
+  stale_ids="$(KEEP_POLICY_ID="$policy_id" python3 -c "
+import sys, json, os
+keep = os.environ['KEEP_POLICY_ID']
+d = json.load(sys.stdin)
+for policy in d.get('result') or []:
+    if policy.get('id') == keep:
+        continue
+    # Granting policies would continue to admit other users even after adding
+    # the one-email policy. Blocking policies do not broaden access.
+    if policy.get('decision') != 'block':
+        print(policy['id'])
+" <<<"$policies")"
+
+  while IFS= read -r stale_id; do
+    [[ -z "$stale_id" ]] && continue
+    echo "    Removing stale grant policy ${stale_id}"
+    delete_result="$(cf DELETE "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies/${stale_id}")"
+    if ! json_success <<<"$delete_result"; then
+      echo "ERROR: Failed to remove stale grant policy ${stale_id}; Access may still allow unintended users"
+      echo "$delete_result" | print_json
+      exit 1
+    fi
+  done <<<"$stale_ids"
+
+  echo "    Email policy enforced"
+}
 
 if [[ -z "${APP_ID}" ]]; then
   echo "==> Creating Access application…"
-  create_body="$(python3 -c "
+  create_body="$(APP_NAME="$APP_NAME" DOMAIN="$DOMAIN" EMAIL="$POCKET_ALLOWED_EMAIL" python3 -c "
 import json, os
 print(json.dumps({
   'name': os.environ['APP_NAME'],
@@ -95,35 +183,20 @@ print(json.dumps({
     'include': [{'email': {'email': os.environ['EMAIL']}}]
   }]
 }))
-" APP_NAME="$APP_NAME" DOMAIN="$DOMAIN" EMAIL="$POCKET_ALLOWED_EMAIL")"
+")"
   created="$(cf POST "${ACCOUNT_PATH}/access/apps" "$create_body")"
-  if ! echo "$created" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"; then
+  if ! json_success <<<"$created"; then
     echo "ERROR: Failed to create Access app"
-    echo "$created" | python3 -m json.tool 2>/dev/null || echo "$created"
+    echo "$created" | print_json
     exit 1
   fi
   APP_ID="$(echo "$created" | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['id'])")"
   echo "    Created app ${APP_ID}"
 else
   echo "    Found app ${APP_ID}"
-  echo "==> Ensuring allow policy for ${POCKET_ALLOWED_EMAIL}…"
-  policy_body="$(python3 -c "
-import json, os
-print(json.dumps({
-  'name': 'Only allowed email',
-  'decision': 'allow',
-  'precedence': 1,
-  'include': [{'email': {'email': os.environ['EMAIL']}}]
-}))
-" EMAIL="$POCKET_ALLOWED_EMAIL")"
-  policy_result="$(cf POST "${ACCOUNT_PATH}/access/apps/${APP_ID}/policies" "$policy_body")"
-  if ! echo "$policy_result" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"; then
-    echo "WARN: Policy create may have failed (app may already have a policy). Check Zero Trust dashboard."
-    echo "$policy_result" | python3 -m json.tool 2>/dev/null || echo "$policy_result"
-  else
-    echo "    Policy added"
-  fi
 fi
+
+ensure_policy
 
 echo ""
 echo "=============================================="

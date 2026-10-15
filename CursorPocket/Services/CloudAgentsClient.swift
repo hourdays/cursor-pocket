@@ -41,7 +41,7 @@ struct StreamEvent {
 final class CloudAgentsClient {
     static let shared = CloudAgentsClient()
 
-    private let baseURL = URL(string: "https://api.cursor.com/v1")!
+    private let baseURL = URL(string: "https://api.cursor.com/v1/")!
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
@@ -152,7 +152,7 @@ final class CloudAgentsClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var url = baseURL.appendingPathComponent("agents/\(agentId)/runs/\(runId)/stream")
+                    let url = try endpointURL(path: "agents/\(agentId)/runs/\(runId)/stream")
                     var request = URLRequest(url: url)
                     request.httpMethod = "GET"
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
@@ -250,6 +250,14 @@ final class CloudAgentsClient {
         return nil
     }
 
+    func endpointURL(path: String) throws -> URL {
+        let relativePath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        guard let url = URL(string: relativePath, relativeTo: baseURL)?.absoluteURL else {
+            throw CloudAgentsError.invalidURL
+        }
+        return url
+    }
+
     private func request<T: Decodable>(
         path: String,
         apiKey: String,
@@ -257,9 +265,7 @@ final class CloudAgentsClient {
         jsonBody: [String: Any]? = nil
     ) async throws -> T {
         guard !apiKey.isEmpty else { throw CloudAgentsError.missingAPIKey }
-        guard let url = URL(string: path, relativeTo: baseURL) else {
-            throw CloudAgentsError.invalidURL
-        }
+        let url = try endpointURL(path: path)
 
         var request = URLRequest(url: url)
         request.httpMethod = method

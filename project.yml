@@ -18,6 +18,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hourdays.CursorPocket
+        PRODUCT_MODULE_NAME: CursorPocket
         PRODUCT_NAME: Cursor Pocket
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
@@ -31,4 +32,15 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ENABLE_PREVIEWS: YES
     scheme:
-      testTargets: []
+      testTargets:
+        - CursorPocketTests
+  CursorPocketTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: CursorPocketTests
+    dependencies:
+      - target: CursorPocket
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hourdays.CursorPocketTests
